@@ -25,6 +25,31 @@ class TestImportBasic:
         import_kindle_zip(kindle_zip, db_path)
         assert db_path.exists()
 
+    def test_import_atomic_replace_swaps_content(self, tmp_path: Path) -> None:
+        """2 回目の import で内容が差し替わる(古いデータが残らない)。"""
+        zip_a = _write_books_only_zip_multi(tmp_path / "a.zip", [
+            ("B000AAA01", "First Import A"),
+            ("B000AAA02", "First Import B"),
+        ])
+        zip_b = _write_books_only_zip_multi(tmp_path / "b.zip", [
+            ("B000BBB01", "Second Import Only"),
+        ])
+        db = tmp_path / "db.duckdb"
+
+        import_kindle_zip(zip_a, db)
+        import_kindle_zip(zip_b, db)
+
+        con = connect(db, read_only=True)
+        try:
+            asins = [r[0] for r in con.execute("SELECT asin FROM books ORDER BY asin").fetchall()]
+            assert asins == ["B000BBB01"], "古い ASIN が残らず、2 回目の内容だけになる"
+            source = con.execute("SELECT source_path FROM import_metadata").fetchone()[0]
+            assert source == str(zip_b)
+            # シングルトンメタデータも維持
+            assert con.execute("SELECT count(*) FROM import_metadata").fetchone()[0] == 1
+        finally:
+            con.close()
+
     def test_import_failure_preserves_existing(self, kindle_zip: Path, db_path: Path, tmp_path: Path) -> None:
         """Failed import leaves existing DB intact."""
         import_kindle_zip(kindle_zip, db_path)
@@ -609,6 +634,38 @@ class TestRequiredColumns:
 
         with pytest.raises(ValueError, match="Author Name"):
             import_kindle_zip(zip_path, tmp_path / "db.duckdb")
+
+
+def _write_books_only_zip_multi(path: Path, books: list[tuple[str, str]]) -> Path:
+    """books CSV だけを含む小 zip を複数冊ぶん作る。置換検証用。"""
+    import csv
+    import io
+    import zipfile
+
+    fields = [
+        "ASIN", "Product Name", "Sortable Title", "Sortable Author Name",
+        "Series Title", "Series Author", "Position In Collection", "Marketplace",
+        "Relationship Creation Date", "Resource Type", "Ownership Type",
+        "Deleted By Customer",
+    ]
+    with zipfile.ZipFile(path, "w") as zf:
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=fields)
+        w.writeheader()
+        for asin, name in books:
+            w.writerow({
+                "ASIN": asin, "Product Name": name,
+                "Sortable Title": name, "Sortable Author Name": "A",
+                "Series Title": "", "Series Author": "", "Position In Collection": "",
+                "Marketplace": "JP", "Relationship Creation Date": "2024-01-01T00:00:00Z",
+                "Resource Type": "ITEM", "Ownership Type": "Item Owner",
+                "Deleted By Customer": "",
+            })
+        zf.writestr(
+            "Kindle.UnifiedLibraryIndex/CustomerRelationshipIndex_FE.csv",
+            buf.getvalue(),
+        )
+    return path
 
 
 def _write_books_only_zip(tmp_path: Path, *, headers: list[str], row: dict) -> Path:
