@@ -188,6 +188,54 @@ class TestQueryCommand:
         result = runner.invoke(app, ["query", "DESCRIBE books", "--db", str(imported_db)])
         assert result.exit_code == 0
 
+    def test_query_compound_write_rejected_by_readonly(self, imported_db: Path) -> None:
+        """regex を通る複文(先頭 SELECT + 後続 UPDATE)を DuckDB の
+        read-only 接続が拒否することを二重防御として検証する。"""
+        from kindb.db import connect
+        # 実行前の値を控える
+        con = connect(imported_db, read_only=True)
+        try:
+            before = con.execute(
+                "SELECT product_name FROM books WHERE asin = 'B000TEST01'"
+            ).fetchone()[0]
+        finally:
+            con.close()
+
+        result = runner.invoke(app, [
+            "query",
+            "SELECT 1; UPDATE books SET product_name='hacked' WHERE asin='B000TEST01'",
+            "--db", str(imported_db),
+        ])
+        assert result.exit_code != 0
+
+        # DB が実際に書き換わっていないこと
+        con = connect(imported_db, read_only=True)
+        try:
+            after = con.execute(
+                "SELECT product_name FROM books WHERE asin = 'B000TEST01'"
+            ).fetchone()[0]
+        finally:
+            con.close()
+        assert after == before
+
+    def test_query_compound_drop_rejected_by_readonly(self, imported_db: Path) -> None:
+        """先頭 SELECT + DROP TABLE もテーブル存続することを確認。"""
+        result = runner.invoke(app, [
+            "query",
+            "SELECT 1; DROP TABLE books",
+            "--db", str(imported_db),
+        ])
+        assert result.exit_code != 0
+
+        from kindb.db import connect
+        con = connect(imported_db, read_only=True)
+        try:
+            # books が残っている
+            count = con.execute("SELECT count(*) FROM books").fetchone()[0]
+            assert count == 3
+        finally:
+            con.close()
+
 
 class TestAggCommands:
     def test_authors(self, imported_db: Path) -> None:
