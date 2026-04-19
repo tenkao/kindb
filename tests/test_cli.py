@@ -71,6 +71,82 @@ class TestSearchCommand:
         assert result.exit_code == 0
         assert "No results" in result.output
 
+    def test_search_escapes_percent_wildcard(self, tmp_path: Path) -> None:
+        """検索語に含まれる `%` はワイルドカードではなくリテラルとして扱われる。"""
+        db = _make_search_fixture(tmp_path, [
+            ("B000PERC01", "50% OFF Sale Book"),
+            ("B000PERC02", "Regular Book"),
+        ])
+        result = runner.invoke(app, ["search", "50%", "--db", str(db)])
+        assert result.exit_code == 0
+        assert "B000PERC01" in result.output
+        assert "B000PERC02" not in result.output, (
+            "エスケープしないと % が任意マッチして Regular Book もヒットしてしまう"
+        )
+
+    def test_search_escapes_underscore_wildcard(self, tmp_path: Path) -> None:
+        """検索語に含まれる `_` もリテラル扱い。"""
+        db = _make_search_fixture(tmp_path, [
+            ("B000UND01", "A_B Book"),
+            ("B000UND02", "AXB Book"),
+        ])
+        result = runner.invoke(app, ["search", "A_B", "--db", str(db)])
+        assert result.exit_code == 0
+        assert "B000UND01" in result.output
+        assert "B000UND02" not in result.output, (
+            "エスケープしないと _ が 1 文字マッチして AXB Book もヒットしてしまう"
+        )
+
+    def test_search_escapes_backslash(self, tmp_path: Path) -> None:
+        """エスケープ順序(先に \\、後にワイルドカード)の回帰ガード。
+
+        もし順序を間違うと、`\\` が `\\\\` になってから `%` のエスケープで
+        さらにバックスラッシュが増え、リテラル `\\` を探しているつもりが
+        マッチしなくなる。
+        """
+        db = _make_search_fixture(tmp_path, [
+            ("B000BS01", "Path A\\B Book"),
+            ("B000BS02", "Path AXB Book"),
+        ])
+        result = runner.invoke(app, ["search", "A\\B", "--db", str(db)])
+        assert result.exit_code == 0
+        assert "B000BS01" in result.output
+        assert "B000BS02" not in result.output
+
+
+def _make_search_fixture(tmp_path: Path, books: list[tuple[str, str]]) -> Path:
+    """検索エスケープ検証用のミニ kindle.zip → DB を作る。グローバル fixture を汚さない。"""
+    import csv
+    import io
+    import zipfile
+
+    from kindb.importer import import_kindle_zip
+
+    zip_path = tmp_path / "mini.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=[
+            "ASIN", "Product Name", "Sortable Title", "Sortable Author Name",
+            "Series Title", "Series Author", "Position In Collection", "Marketplace",
+            "Relationship Creation Date", "Resource Type", "Ownership Type",
+            "Deleted By Customer",
+        ])
+        writer.writeheader()
+        for asin, name in books:
+            writer.writerow({
+                "ASIN": asin, "Product Name": name,
+                "Sortable Title": name, "Sortable Author Name": "A",
+                "Series Title": "", "Series Author": "", "Position In Collection": "",
+                "Marketplace": "JP", "Relationship Creation Date": "2024-01-01T00:00:00Z",
+                "Resource Type": "ITEM", "Ownership Type": "Item Owner",
+                "Deleted By Customer": "",
+            })
+        zf.writestr("Kindle.UnifiedLibraryIndex/CustomerRelationshipIndex_FE.csv", buf.getvalue())
+
+    db = tmp_path / "mini.duckdb"
+    import_kindle_zip(zip_path, db)
+    return db
+
 
 class TestQueryCommand:
     def test_query_json(self, imported_db: Path) -> None:

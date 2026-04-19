@@ -23,6 +23,15 @@ def _db_option() -> Path:
     return typer.Option(None, "--db", help="Database path (default: ~/.kindb/kindle.duckdb)")
 
 
+def _escape_like(term: str) -> str:
+    """Escape LIKE/ILIKE wildcards so that user input is matched literally.
+
+    Order matters: escape the backslash first, then the wildcards, otherwise
+    the newly inserted backslashes would get double-escaped.
+    """
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 @app.command("import")
 def import_cmd(
     zip_path: str = typer.Argument(..., help="Path to Kindle.zip"),
@@ -90,16 +99,16 @@ def search(
 
     con = connect(db_path, read_only=True)
     try:
-        like = f"%{term}%"
+        like = f"%{_escape_like(term)}%"
         rows = con.execute(
-            """SELECT asin, product_name, authors, genres, series_title,
+            r"""SELECT asin, product_name, authors, genres, series_title,
                       reading_session_count, last_read_at
                FROM v_books_with_reading
-               WHERE product_name ILIKE ?
-                  OR array_to_string(authors, ', ') ILIKE ?
-                  OR array_to_string(genres, ', ') ILIKE ?
-                  OR series_title ILIKE ?
-                  OR asin ILIKE ?
+               WHERE product_name ILIKE ? ESCAPE '\'
+                  OR array_to_string(authors, ', ') ILIKE ? ESCAPE '\'
+                  OR array_to_string(genres, ', ') ILIKE ? ESCAPE '\'
+                  OR series_title ILIKE ? ESCAPE '\'
+                  OR asin ILIKE ? ESCAPE '\'
                ORDER BY product_name""",
             [like, like, like, like, like],
         ).fetchall()
