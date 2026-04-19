@@ -257,13 +257,12 @@ def reading(db: Optional[str] = _db_option()) -> None:
         db,
         """SELECT rs.asin,
                   b.product_name,
-                  count(*) AS sessions,
-                  max(rs.start_timestamp) AS last_read,
-                  sum(rs.total_reading_millis) AS total_millis,
-                  sum(rs.number_of_page_flips) AS total_flips
-           FROM reading_sessions rs
+                  rs.reading_session_count AS sessions,
+                  rs.last_read_at AS last_read,
+                  rs.total_reading_millis AS total_millis,
+                  rs.total_page_flips AS total_flips
+           FROM v_reading_summary rs
            LEFT JOIN books b ON rs.asin = b.asin
-           GROUP BY rs.asin, b.product_name
            ORDER BY last_read DESC NULLS LAST""",
         title="Reading Sessions",
         columns=[
