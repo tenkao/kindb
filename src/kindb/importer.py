@@ -114,7 +114,7 @@ def _import_books(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> int:
 
     rows = _read_csv(zf, path, required_columns=_BOOKS_REQUIRED_COLUMNS)
     source = path.split("/")[-1]
-    count = 0
+    values = []
     for row in rows:
         resource_type = (row.get("Resource Type") or "").strip()
         ownership_type = (row.get("Ownership Type") or "").strip()
@@ -127,26 +127,28 @@ def _import_books(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> int:
         if not asin:
             continue
 
-        con.execute(
+        values.append((
+            asin,
+            row.get("Product Name"),
+            row.get("Sortable Title"),
+            row.get("Sortable Author Name"),
+            row.get("Series Title"),
+            row.get("Series Author"),
+            row.get("Position In Collection"),
+            row.get("Marketplace"),
+            _parse_timestamp(row.get("Relationship Creation Date")),
+            source,
+        ))
+
+    if values:
+        con.executemany(
             """INSERT INTO books (asin, product_name, sortable_title, sortable_author_name,
                series_title, series_author, position_in_collection, marketplace,
                relationship_creation_date, source_file)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            [
-                asin,
-                row.get("Product Name"),
-                row.get("Sortable Title"),
-                row.get("Sortable Author Name"),
-                row.get("Series Title"),
-                row.get("Series Author"),
-                row.get("Position In Collection"),
-                row.get("Marketplace"),
-                _parse_timestamp(row.get("Relationship Creation Date")),
-                source,
-            ],
+            values,
         )
-        count += 1
-    return count
+    return len(values)
 
 
 def _import_authors(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> None:
@@ -156,13 +158,15 @@ def _import_authors(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> None
 
     rows = _read_csv(zf, path, required_columns=_AUTHORS_REQUIRED_COLUMNS)
     source = path.split("/")[-1]
-    for row in rows:
-        asin = (row.get("ASIN") or "").strip()
-        if not asin:
-            continue
-        con.execute(
+    values = [
+        (asin, row.get("Author Name"), source)
+        for row in rows
+        if (asin := (row.get("ASIN") or "").strip())
+    ]
+    if values:
+        con.executemany(
             "INSERT INTO book_authors (asin, author_name, source_file) VALUES (?, ?, ?)",
-            [asin, row.get("Author Name"), source],
+            values,
         )
 
 
@@ -173,13 +177,15 @@ def _import_genres(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> None:
 
     rows = _read_csv(zf, path, required_columns=_GENRES_REQUIRED_COLUMNS)
     source = path.split("/")[-1]
-    for row in rows:
-        asin = (row.get("ASIN") or "").strip()
-        if not asin:
-            continue
-        con.execute(
+    values = [
+        (asin, row.get("Genre"), source)
+        for row in rows
+        if (asin := (row.get("ASIN") or "").strip())
+    ]
+    if values:
+        con.executemany(
             "INSERT INTO book_genres (asin, genre, source_file) VALUES (?, ?, ?)",
-            [asin, row.get("Genre"), source],
+            values,
         )
 
 
@@ -190,14 +196,17 @@ def _import_images(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> None:
 
     rows = _read_csv(zf, path, required_columns=_IMAGES_REQUIRED_COLUMNS)
     source = path.split("/")[-1]
+    values = []
     for row in rows:
         asin = (row.get("ASIN") or "").strip()
         image_url = (row.get("Image URL") or "").strip()
         if not asin or not image_url:
             continue
-        con.execute(
+        values.append((asin, image_url, source))
+    if values:
+        con.executemany(
             "INSERT INTO book_images (asin, image_url, source_file) VALUES (?, ?, ?)",
-            [asin, image_url, source],
+            values,
         )
 
 
@@ -208,28 +217,29 @@ def _import_reading_sessions(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile
 
     rows = _read_csv(zf, path)
     source = path.split("/")[-1]
-    count = 0
+    values = []
     for row in rows:
         asin = (row.get("ASIN") or "").strip()
         if not asin:
             continue
-        con.execute(
+        values.append((
+            asin,
+            _parse_timestamp(row.get("Start Timestamp")),
+            _parse_timestamp(row.get("End Timestamp")),
+            row.get("Content Type"),
+            _parse_bigint(row.get("Total Reading Millis")),
+            _parse_int(row.get("Number Of Page Flips")),
+            source,
+        ))
+    if values:
+        con.executemany(
             """INSERT INTO reading_sessions
                (asin, start_timestamp, end_timestamp, content_type,
                 total_reading_millis, number_of_page_flips, source_file)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            [
-                asin,
-                _parse_timestamp(row.get("Start Timestamp")),
-                _parse_timestamp(row.get("End Timestamp")),
-                row.get("Content Type"),
-                _parse_bigint(row.get("Total Reading Millis")),
-                _parse_int(row.get("Number Of Page Flips")),
-                source,
-            ],
+            values,
         )
-        count += 1
-    return count
+    return len(values)
 
 
 def _import_reading_insight_sessions(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> None:
@@ -239,23 +249,26 @@ def _import_reading_insight_sessions(con: duckdb.DuckDBPyConnection, zf: zipfile
 
     rows = _read_csv(zf, path)
     source = path.split("/")[-1]
+    values = []
     for row in rows:
         asin = (row.get("ASIN") or "").strip()
         if not asin:
             continue
-        con.execute(
+        values.append((
+            asin,
+            row.get("Product Name"),
+            _parse_timestamp(row.get("Start Time")),
+            _parse_timestamp(row.get("End Time")),
+            _parse_bigint(row.get("Total Reading Milliseconds")),
+            source,
+        ))
+    if values:
+        con.executemany(
             """INSERT INTO reading_insight_sessions
                (asin, product_name, start_time, end_time,
                 total_reading_milliseconds, source_file)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            [
-                asin,
-                row.get("Product Name"),
-                _parse_timestamp(row.get("Start Time")),
-                _parse_timestamp(row.get("End Time")),
-                _parse_bigint(row.get("Total Reading Milliseconds")),
-                source,
-            ],
+            values,
         )
 
 
@@ -266,6 +279,7 @@ def _import_personal_documents(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFi
 
     rows = _read_csv(zf, path)
     source = path.split("/")[-1]
+    values = []
     for row in rows:
         deleted = (row.get("HasBeenDeleted") or "").strip()
         if deleted == "Yes":
@@ -273,22 +287,24 @@ def _import_personal_documents(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFi
         doc_id = (row.get("Document ID") or "").strip()
         if not doc_id:
             continue
-        con.execute(
+        values.append((
+            doc_id,
+            row.get("Title"),
+            row.get("Document Provider"),
+            row.get("Filename"),
+            row.get("Document Original Type"),
+            _parse_bigint(row.get("Document Size In Bytes")),
+            _parse_timestamp(row.get("Entry Creation Date")),
+            source,
+        ))
+    if values:
+        con.executemany(
             """INSERT INTO personal_documents
                (document_id, title, document_provider, filename,
                 document_original_type, document_size_in_bytes,
                 entry_creation_date, source_file)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            [
-                doc_id,
-                row.get("Title"),
-                row.get("Document Provider"),
-                row.get("Filename"),
-                row.get("Document Original Type"),
-                _parse_bigint(row.get("Document Size In Bytes")),
-                _parse_timestamp(row.get("Entry Creation Date")),
-                source,
-            ],
+            values,
         )
 
 
