@@ -263,6 +263,43 @@ class TestAggCommands:
         assert result.exit_code == 0
         assert "B000TEST01" in result.output
 
+    def test_reading_does_not_double_count_insights(self, imported_db: Path) -> None:
+        """fixture には reading_sessions に B000TEST01 が 2 件、
+        reading_insight_sessions にも同 ASIN で 1 件追加で入っている。
+        kindb reading の sessions 列は 2(reading_sessions のみ由来)で
+        あり、insight を合算した 3 にならないことを検証する。"""
+        from kindb.db import connect
+        # まず SQL レベルで確定: reading_sessions = 2 rows, insight = 1 row
+        con = connect(imported_db, read_only=True)
+        try:
+            rs_count = con.execute(
+                "SELECT count(*) FROM reading_sessions WHERE asin = 'B000TEST01'"
+            ).fetchone()[0]
+            insight_count = con.execute(
+                "SELECT count(*) FROM reading_insight_sessions WHERE asin = 'B000TEST01'"
+            ).fetchone()[0]
+            assert rs_count == 2
+            assert insight_count == 1  # もし 0 なら fixture 側の前提が変わっている
+            summary = con.execute(
+                "SELECT reading_session_count FROM v_reading_summary WHERE asin = 'B000TEST01'"
+            ).fetchone()[0]
+            assert summary == 2, "v_reading_summary は reading_sessions のみ集計(insight 非混入)"
+        finally:
+            con.close()
+
+        result = runner.invoke(app, ["reading", "--db", str(imported_db)])
+        assert result.exit_code == 0
+        # 出力から B000TEST01 行を抽出し、sessions 列が 2 であること
+        import re
+        match = re.search(r"B000TEST01.*", result.output)
+        assert match is not None
+        line = match.group(0)
+        # rich の Table 出力では列は│区切り or 空白区切り。"2" と "3" のどちらが
+        # 含まれるかで区別する(2 が正、3 なら二重計上)
+        assert " 2 " in line or line.rstrip().endswith(" 2") or "│ 2 " in line, (
+            f"sessions=2 が期待されるが、行: {line!r}"
+        )
+
 
 class TestDeleteCommand:
     def test_delete_with_confirm(self, imported_db: Path) -> None:
