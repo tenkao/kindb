@@ -12,7 +12,7 @@ from pathlib import Path
 
 import duckdb
 
-from kindb.db import connect, create_schema
+from kindb.db import connect, create_schema, wal_path
 
 
 def _find_csv_in_zip(zf: zipfile.ZipFile, suffix: str) -> str | None:
@@ -284,10 +284,13 @@ def import_kindle_zip(zip_path: str | Path, db_path: str | Path) -> dict:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(tmp_db), str(db_path))
 
-        # Clean up WAL file if it exists
-        wal = tmp_db.with_suffix(".duckdb.wal")
-        if wal.exists():
-            wal.unlink()
+        # Remove any WAL sitting next to the previous db_path. It was
+        # written for the old DB and has no relation to the just-swapped
+        # file; leaving it would confuse DuckDB on the next open.
+        # (tmp-side WAL, if any, is cleaned up by the tmp_dir rmtree in
+        # the finally block below.)
+        orphan_wal = wal_path(db_path)
+        orphan_wal.unlink(missing_ok=True)
 
         return {
             "books_count": books_count,

@@ -155,3 +155,24 @@ class TestDeleteCommand:
     def test_delete_cancel(self, imported_db: Path) -> None:
         runner.invoke(app, ["delete", "--db", str(imported_db)], input="n\n")
         assert imported_db.exists()
+
+    def test_delete_removes_wal_with_duckdb_ext(self, imported_db: Path) -> None:
+        """delete が foo.duckdb.wal を消す。"""
+        wal = Path(str(imported_db) + ".wal")
+        wal.write_text("fake-wal")
+        result = runner.invoke(app, ["delete", "--db", str(imported_db), "--yes"])
+        assert result.exit_code == 0
+        assert not imported_db.exists()
+        assert not wal.exists()
+
+    def test_delete_removes_wal_with_db_ext(self, kindle_zip: Path, tmp_path: Path) -> None:
+        """拡張子が .db でも foo.db.wal が消える(旧実装は foo.wal を見て失敗)。"""
+        from kindb.importer import import_kindle_zip
+        db = tmp_path / "store.db"
+        import_kindle_zip(kindle_zip, db)
+        wal = Path(str(db) + ".wal")
+        wal.write_text("fake-wal")
+        result = runner.invoke(app, ["delete", "--db", str(db), "--yes"])
+        assert result.exit_code == 0
+        assert not db.exists()
+        assert not wal.exists()

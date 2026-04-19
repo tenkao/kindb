@@ -8,7 +8,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from kindb.db import connect
+from kindb.db import connect, wal_path
 from kindb.importer import import_kindle_zip
 
 
@@ -350,6 +350,39 @@ class TestMissingFiles:
         assert con.execute("SELECT count(*) FROM book_genres").fetchone()[0] == 0
         assert con.execute("SELECT count(*) FROM reading_sessions").fetchone()[0] == 0
         con.close()
+
+
+class TestWalPath:
+    def test_wal_path_duckdb_ext(self) -> None:
+        assert wal_path(Path("/tmp/foo.duckdb")) == Path("/tmp/foo.duckdb.wal")
+
+    def test_wal_path_db_ext(self) -> None:
+        assert wal_path(Path("/tmp/foo.db")) == Path("/tmp/foo.db.wal")
+
+    def test_wal_path_no_ext(self) -> None:
+        assert wal_path(Path("/tmp/foo")) == Path("/tmp/foo.wal")
+
+    def test_wal_path_accepts_str(self) -> None:
+        assert wal_path("/tmp/foo.db") == Path("/tmp/foo.db.wal")
+
+
+class TestImportStaleWalCleanup:
+    def test_stale_wal_removed_on_import(self, kindle_zip: Path, tmp_path: Path) -> None:
+        """置換前から残っていた stale WAL は import 成功後に削除される。"""
+        db = tmp_path / "store.duckdb"
+        stale = Path(str(db) + ".wal")
+        stale.write_text("orphaned-wal-from-previous-run")
+        import_kindle_zip(kindle_zip, db)
+        assert db.exists()
+        assert not stale.exists(), "stale WAL should be removed after atomic replace"
+
+    def test_stale_wal_removed_with_db_ext(self, kindle_zip: Path, tmp_path: Path) -> None:
+        db = tmp_path / "store.db"
+        stale = Path(str(db) + ".wal")
+        stale.write_text("orphaned")
+        import_kindle_zip(kindle_zip, db)
+        assert db.exists()
+        assert not stale.exists()
 
 
 class TestInvalidInput:

@@ -132,6 +132,16 @@ def get_db_path(db: str | None = None) -> Path:
     return Path(os.environ.get("KINDB_DB_PATH", str(DEFAULT_DB_PATH)))
 
 
+def wal_path(db_path: Path | str) -> Path:
+    """Return the DuckDB WAL sidecar path for a given DB path.
+
+    DuckDB appends ``.wal`` to the full DB path regardless of the DB file's
+    extension (``foo.db`` → ``foo.db.wal``, ``foo`` → ``foo.wal``), so we
+    never use ``Path.with_suffix`` here.
+    """
+    return Path(str(db_path) + ".wal")
+
+
 def connect(db_path: Path | str, *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)

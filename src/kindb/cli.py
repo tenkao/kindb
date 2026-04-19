@@ -11,7 +11,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from kindb.db import connect, get_db_path
+from kindb.db import connect, get_db_path, wal_path
 from kindb.importer import import_kindle_zip
 
 app = typer.Typer(help="Kindle library manager powered by DuckDB.")
@@ -294,7 +294,7 @@ def delete(
             return
 
     db_path.unlink()
-    wal = db_path.with_suffix(".duckdb.wal")
+    wal = wal_path(db_path)
     if wal.exists():
         wal.unlink()
     console.print(f"[green]Deleted:[/green] {db_path}")
