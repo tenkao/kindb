@@ -446,6 +446,41 @@ class TestInvalidInput:
             import_kindle_zip(bad, tmp_path / "test.duckdb")
 
 
+class TestEmptyCsv:
+    def test_books_csv_headers_only_imports_zero_books(self, tmp_path: Path) -> None:
+        """books CSV がヘッダのみ(データ行 0)でも import は成功し、books が空になる。"""
+        import csv
+        import io
+        import zipfile
+
+        zip_path = tmp_path / "empty_books.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            buf = io.StringIO()
+            csv.DictWriter(buf, fieldnames=[
+                "ASIN", "Product Name", "Sortable Title", "Sortable Author Name",
+                "Series Title", "Series Author", "Position In Collection", "Marketplace",
+                "Relationship Creation Date", "Resource Type", "Ownership Type",
+                "Deleted By Customer",
+            ]).writeheader()
+            zf.writestr(
+                "Kindle.UnifiedLibraryIndex/CustomerRelationshipIndex_FE.csv",
+                buf.getvalue(),
+            )
+
+        db = tmp_path / "db.duckdb"
+        result = import_kindle_zip(zip_path, db)
+        assert result["books_count"] == 0
+        assert result["reading_sessions_count"] == 0
+        assert db.exists()
+        con = connect(db, read_only=True)
+        try:
+            assert con.execute("SELECT count(*) FROM books").fetchone()[0] == 0
+            # import_metadata はシングルトンで 1 行入る
+            assert con.execute("SELECT count(*) FROM import_metadata").fetchone()[0] == 1
+        finally:
+            con.close()
+
+
 class TestRequiredColumns:
     def test_books_csv_missing_resource_type_raises(self, tmp_path: Path) -> None:
         """蔵書本体 CSV の必須列欠落は明示的に ValueError を投げる。"""
