@@ -444,3 +444,93 @@ class TestInvalidInput:
         bad.write_bytes(b"not a zip file")
         with pytest.raises(ValueError, match="Not a valid zip"):
             import_kindle_zip(bad, tmp_path / "test.duckdb")
+
+
+class TestRequiredColumns:
+    def test_books_csv_missing_resource_type_raises(self, tmp_path: Path) -> None:
+        """蔵書本体 CSV の必須列欠落は明示的に ValueError を投げる。"""
+        zip_path = _write_books_only_zip(tmp_path, headers=[
+            "ASIN", "Product Name", "Ownership Type", "Deleted By Customer",
+        ], row={
+            "ASIN": "B000X", "Product Name": "X",
+            "Ownership Type": "Item Owner", "Deleted By Customer": "",
+        })
+        with pytest.raises(ValueError, match="missing required columns"):
+            import_kindle_zip(zip_path, tmp_path / "db.duckdb")
+
+    def test_books_csv_missing_asin_raises(self, tmp_path: Path) -> None:
+        zip_path = _write_books_only_zip(tmp_path, headers=[
+            "Product Name", "Resource Type", "Ownership Type", "Deleted By Customer",
+        ], row={
+            "Product Name": "X", "Resource Type": "ITEM",
+            "Ownership Type": "Item Owner", "Deleted By Customer": "",
+        })
+        with pytest.raises(ValueError, match="ASIN"):
+            import_kindle_zip(zip_path, tmp_path / "db.duckdb")
+
+    def test_books_csv_invalid_does_not_leave_target_db(self, tmp_path: Path) -> None:
+        """必須列欠落で失敗したとき、置換先 DB は作られない(tmp DB は破棄される)。"""
+        zip_path = _write_books_only_zip(tmp_path, headers=[
+            "ASIN", "Product Name",  # Resource Type / Ownership Type / Deleted By Customer 欠落
+        ], row={"ASIN": "B000X", "Product Name": "X"})
+        db = tmp_path / "db.duckdb"
+        with pytest.raises(ValueError):
+            import_kindle_zip(zip_path, db)
+        assert not db.exists()
+
+    def test_authors_csv_missing_author_name_raises(self, tmp_path: Path) -> None:
+        """optional な authors CSV でも、必須列 Author Name が欠けたら明示エラー。"""
+        zip_path = tmp_path / "bad_authors.zip"
+        import csv
+        import io
+        import zipfile
+
+        # 正しい books CSV + Author Name 欠落の authors CSV
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            buf = io.StringIO()
+            w = csv.DictWriter(buf, fieldnames=[
+                "ASIN", "Product Name", "Sortable Title", "Sortable Author Name",
+                "Series Title", "Series Author", "Position In Collection", "Marketplace",
+                "Relationship Creation Date", "Resource Type", "Ownership Type",
+                "Deleted By Customer",
+            ])
+            w.writeheader()
+            w.writerow({
+                "ASIN": "B000X", "Product Name": "X", "Sortable Title": "",
+                "Sortable Author Name": "", "Series Title": "", "Series Author": "",
+                "Position In Collection": "", "Marketplace": "JP",
+                "Relationship Creation Date": "2024-01-01T00:00:00Z",
+                "Resource Type": "ITEM", "Ownership Type": "Item Owner",
+                "Deleted By Customer": "",
+            })
+            zf.writestr(
+                "Kindle.UnifiedLibraryIndex/CustomerRelationshipIndex_FE.csv",
+                buf.getvalue(),
+            )
+            # Author Name 列がない authors CSV
+            zf.writestr(
+                "Kindle.UnifiedLibraryIndex/CustomerAuthorNameRelationship_FE.csv",
+                "ASIN\nB000X\n",
+            )
+
+        with pytest.raises(ValueError, match="Author Name"):
+            import_kindle_zip(zip_path, tmp_path / "db.duckdb")
+
+
+def _write_books_only_zip(tmp_path: Path, *, headers: list[str], row: dict) -> Path:
+    """books CSV だけを含むミニ zip を作る。必須列欠落テスト用。"""
+    import csv
+    import io
+    import zipfile
+
+    zip_path = tmp_path / "bad_books.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=headers)
+        writer.writeheader()
+        writer.writerow({h: row.get(h, "") for h in headers})
+        zf.writestr(
+            "Kindle.UnifiedLibraryIndex/CustomerRelationshipIndex_FE.csv",
+            buf.getvalue(),
+        )
+    return zip_path

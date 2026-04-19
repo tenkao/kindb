@@ -70,11 +70,41 @@ def _parse_bigint(value: str | None) -> int | None:
     return _parse_int(value)
 
 
-def _read_csv(zf: zipfile.ZipFile, path: str) -> list[dict[str, str]]:
+def _read_csv(
+    zf: zipfile.ZipFile,
+    path: str,
+    *,
+    required_columns: set[str] | None = None,
+) -> list[dict[str, str]]:
+    """Read a CSV from the zip. If required_columns is given, raise ValueError
+    when any of them are absent from the header. Column names are compared
+    case-sensitively to match Amazon's official export."""
     with zf.open(path) as f:
         text = io.TextIOWrapper(f, encoding="utf-8-sig")
         reader = csv.DictReader(text)
+        if required_columns is not None:
+            headers = set(reader.fieldnames or [])
+            missing = required_columns - headers
+            if missing:
+                raise ValueError(
+                    f"{path} is missing required columns: {sorted(missing)}"
+                )
         return list(reader)
+
+
+# Required columns per optional CSV. Missing any of these raises ValueError
+# rather than silently importing NULLs — a silent 0-row success or all-NULL
+# column is the failure mode we most want to surface to the user.
+_BOOKS_REQUIRED_COLUMNS = {
+    "ASIN",
+    "Resource Type",
+    "Ownership Type",
+    "Deleted By Customer",
+    "Relationship Creation Date",
+}
+_AUTHORS_REQUIRED_COLUMNS = {"ASIN", "Author Name"}
+_GENRES_REQUIRED_COLUMNS = {"ASIN", "Genre"}
+_IMAGES_REQUIRED_COLUMNS = {"ASIN", "Image URL"}
 
 
 def _import_books(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> int:
@@ -82,7 +112,7 @@ def _import_books(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> int:
     if path is None:
         raise FileNotFoundError("CustomerRelationshipIndex_FE.csv not found in zip")
 
-    rows = _read_csv(zf, path)
+    rows = _read_csv(zf, path, required_columns=_BOOKS_REQUIRED_COLUMNS)
     source = path.split("/")[-1]
     count = 0
     for row in rows:
@@ -124,7 +154,7 @@ def _import_authors(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> None
     if path is None:
         return
 
-    rows = _read_csv(zf, path)
+    rows = _read_csv(zf, path, required_columns=_AUTHORS_REQUIRED_COLUMNS)
     source = path.split("/")[-1]
     for row in rows:
         asin = (row.get("ASIN") or "").strip()
@@ -141,7 +171,7 @@ def _import_genres(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> None:
     if path is None:
         return
 
-    rows = _read_csv(zf, path)
+    rows = _read_csv(zf, path, required_columns=_GENRES_REQUIRED_COLUMNS)
     source = path.split("/")[-1]
     for row in rows:
         asin = (row.get("ASIN") or "").strip()
@@ -158,7 +188,7 @@ def _import_images(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> None:
     if path is None:
         return
 
-    rows = _read_csv(zf, path)
+    rows = _read_csv(zf, path, required_columns=_IMAGES_REQUIRED_COLUMNS)
     source = path.split("/")[-1]
     for row in rows:
         asin = (row.get("ASIN") or "").strip()
