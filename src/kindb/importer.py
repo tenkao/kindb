@@ -271,10 +271,12 @@ def import_kindle_zip(zip_path: str | Path, db_path: str | Path) -> dict:
             _import_reading_insight_sessions(con, zf)
             _import_personal_documents(con, zf)
 
+        # Singleton: keep exactly one row keyed on import_id=1
+        con.execute("DELETE FROM import_metadata")
         con.execute(
             """INSERT INTO import_metadata
-               (source_path, source_type, imported_at, books_count, reading_sessions_count)
-               VALUES (?, ?, current_timestamp, ?, ?)""",
+               (import_id, source_path, source_type, imported_at, books_count, reading_sessions_count)
+               VALUES (1, ?, ?, current_timestamp, ?, ?)""",
             [str(zip_path), "kindle_zip", books_count, reading_sessions_count],
         )
         con.close()

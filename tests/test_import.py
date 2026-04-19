@@ -5,6 +5,7 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
+import duckdb
 import pytest
 
 from kindb.db import connect
@@ -215,6 +216,40 @@ class TestImportMetadata:
         assert row is not None
         assert row[4] == 3  # books_count
         assert row[5] == 3  # reading_sessions_count
+
+    def test_metadata_singleton_after_single_import(self, imported_db: Path) -> None:
+        con = connect(imported_db, read_only=True)
+        count = con.execute("SELECT count(*) FROM import_metadata").fetchone()[0]
+        assert count == 1
+        import_id = con.execute("SELECT import_id FROM import_metadata").fetchone()[0]
+        assert import_id == 1
+
+    def test_metadata_singleton_after_reimport(self, kindle_zip: Path, db_path: Path) -> None:
+        """2 回連続 import でも 1 行しか残らない。"""
+        import_kindle_zip(kindle_zip, db_path)
+        import_kindle_zip(kindle_zip, db_path)
+        con = connect(db_path, read_only=True)
+        count = con.execute("SELECT count(*) FROM import_metadata").fetchone()[0]
+        assert count == 1
+
+    def test_metadata_has_primary_key_on_import_id(self, imported_db: Path) -> None:
+        """スキーマレベルで import_id が PRIMARY KEY である。"""
+        con = connect(imported_db, read_only=True)
+        rows = con.execute("PRAGMA table_info('import_metadata')").fetchall()
+        # DuckDB PRAGMA table_info columns: cid, name, type, notnull, dflt_value, pk
+        pk_cols = [r[1] for r in rows if r[5]]
+        assert pk_cols == ["import_id"]
+
+    def test_metadata_pk_rejects_duplicate_insert(self, imported_db: Path) -> None:
+        """PK 重複する直接 INSERT は DuckDB 側で拒否される。"""
+        con = connect(imported_db)
+        try:
+            with pytest.raises(duckdb.ConstraintException):
+                con.execute(
+                    "INSERT INTO import_metadata (import_id, source_path) VALUES (1, 'dup')"
+                )
+        finally:
+            con.close()
 
 
 class TestViews:

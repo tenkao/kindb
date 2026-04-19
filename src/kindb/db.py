@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS personal_documents (
 );
 
 CREATE TABLE IF NOT EXISTS import_metadata (
-    import_id INTEGER DEFAULT 1,
+    import_id INTEGER PRIMARY KEY DEFAULT 1,
     source_path VARCHAR,
     source_type VARCHAR,
     imported_at TIMESTAMP DEFAULT current_timestamp,
