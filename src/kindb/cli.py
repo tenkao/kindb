@@ -166,7 +166,7 @@ def query(
                 t.add_row(*[_format_value(v) for v in row])
             console.print(t)
         else:
-            data = [dict(zip(columns, [_json_value(v) for v in row])) for row in rows]
+            data = [dict(zip(columns, row)) for row in rows]
             console.print(json.dumps(data, ensure_ascii=False, indent=2, default=str))
     finally:
         con.close()
@@ -178,12 +178,6 @@ def _format_value(v: object) -> str:
     if isinstance(v, list):
         return ", ".join(str(x) for x in v)
     return str(v)
-
-
-def _json_value(v: object) -> object:
-    if isinstance(v, list):
-        return v
-    return v
 
 
 @app.command()
