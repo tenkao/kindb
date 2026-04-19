@@ -258,6 +258,15 @@ class TestAggCommands:
         assert result.exit_code == 0
         assert "B000TEST02" in result.output  # most recent by date
 
+    def test_recent_respects_limit(self, imported_db: Path) -> None:
+        """--limit がパラメータバインドで正しく反映される。"""
+        result = runner.invoke(app, ["recent", "--limit", "1", "--db", str(imported_db)])
+        assert result.exit_code == 0
+        # 3 冊のうち 1 冊だけ(2024-03-20 が最新)
+        assert "B000TEST02" in result.output
+        assert "B000TEST01" not in result.output
+        assert "B000TEST03" not in result.output
+
     def test_reading(self, imported_db: Path) -> None:
         result = runner.invoke(app, ["reading", "--db", str(imported_db)])
         assert result.exit_code == 0

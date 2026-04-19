@@ -244,12 +244,13 @@ def recent(
     """Show recently added books."""
     _run_agg_query(
         db,
-        f"""SELECT asin, product_name, sortable_author_name, relationship_creation_date
+        """SELECT asin, product_name, sortable_author_name, relationship_creation_date
            FROM books
            ORDER BY relationship_creation_date DESC NULLS LAST
-           LIMIT {limit}""",
+           LIMIT ?""",
         title="Recent Books",
         columns=[("ASIN", "dim"), ("Title", None), ("Author", None), ("Added", None)],
+        params=[limit],
     )
 
 
@@ -309,6 +310,7 @@ def _run_agg_query(
     *,
     title: str,
     columns: list[tuple[str, str | None]],
+    params: list | None = None,
 ) -> None:
     db_path = get_db_path(db)
     if not db_path.exists():
@@ -317,7 +319,7 @@ def _run_agg_query(
 
     con = connect(db_path, read_only=True)
     try:
-        rows = con.execute(sql).fetchall()
+        rows = con.execute(sql, params or []).fetchall()
         if not rows:
             console.print("No data.")
             return
