@@ -11,6 +11,11 @@ kindb は公式 Kindle.zip を DuckDB に取り込み、CLI から Kindle 蔵書
 ## Commands
 
 ```bash
+# Create virtualenv
+# macOS + Python 3.13: use venv/ instead of .venv/ because hidden .pth files are skipped by site.py.
+python3 -m venv venv
+source venv/bin/activate
+
 # Install (editable)
 pip install -e ".[dev]"
 
