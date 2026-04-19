@@ -9,7 +9,7 @@ import duckdb
 import pytest
 
 from kindb.db import connect, wal_path
-from kindb.importer import import_kindle_zip
+from kindb.importer import _parse_timestamp, import_kindle_zip
 
 
 class TestImportBasic:
@@ -350,6 +350,55 @@ class TestMissingFiles:
         assert con.execute("SELECT count(*) FROM book_genres").fetchone()[0] == 0
         assert con.execute("SELECT count(*) FROM reading_sessions").fetchone()[0] == 0
         con.close()
+
+
+class TestParseTimestamp:
+    def test_z_suffix_parses_as_utc_naive(self) -> None:
+        dt = _parse_timestamp("2024-01-15T10:30:00.000Z")
+        assert dt is not None
+        assert dt.tzinfo is None
+        assert dt.year == 2024 and dt.month == 1 and dt.day == 15
+        assert dt.hour == 10 and dt.minute == 30
+
+    def test_z_suffix_without_microseconds(self) -> None:
+        dt = _parse_timestamp("2024-03-20T08:00:00Z")
+        assert dt is not None
+        assert dt.tzinfo is None
+        assert dt.hour == 8
+
+    def test_offset_converted_to_utc_naive(self) -> None:
+        """+09:00 の 19:30 は UTC 10:30 に正規化される。"""
+        dt = _parse_timestamp("2024-01-15T19:30:00+09:00")
+        assert dt is not None
+        assert dt.tzinfo is None
+        assert dt.hour == 10 and dt.minute == 30
+
+    def test_offset_with_microseconds(self) -> None:
+        dt = _parse_timestamp("2024-01-15T19:30:00.500+09:00")
+        assert dt is not None
+        assert dt.tzinfo is None
+        assert dt.hour == 10 and dt.microsecond == 500000
+
+    def test_naive_space_separated_kept_as_naive(self) -> None:
+        dt = _parse_timestamp("2024-01-15 10:30:00")
+        assert dt is not None
+        assert dt.tzinfo is None
+        assert dt.hour == 10
+
+    def test_date_only(self) -> None:
+        dt = _parse_timestamp("2024-01-15")
+        assert dt is not None
+        assert dt.tzinfo is None
+        assert dt.hour == 0
+
+    def test_empty_returns_none(self) -> None:
+        assert _parse_timestamp("") is None
+        assert _parse_timestamp("   ") is None
+        assert _parse_timestamp(None) is None
+
+    def test_garbage_returns_none(self) -> None:
+        assert _parse_timestamp("not-a-date") is None
+        assert _parse_timestamp("2024/01/15") is None
 
 
 class TestWalPath:

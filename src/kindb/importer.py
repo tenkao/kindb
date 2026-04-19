@@ -7,7 +7,7 @@ import io
 import shutil
 import tempfile
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import duckdb
@@ -23,11 +23,24 @@ def _find_csv_in_zip(zf: zipfile.ZipFile, suffix: str) -> str | None:
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
+    """Parse a timestamp string and return a timezone-naive ``datetime``.
+
+    DuckDB ``TIMESTAMP`` is timezone-naive, so the return value is always
+    naive. The normalization rule is:
+
+    * **Aware input** (``...Z`` or ``...+09:00``) is converted to UTC, then
+      ``tzinfo`` is stripped.
+    * **Naive input** (e.g. ``2024-01-15 10:30:00`` or ``2024-01-15``) is
+      returned as-is without any conversion.
+    * Unparseable input returns ``None``.
+    """
     if not value or not value.strip():
         return None
+    s = value.strip()
+    # Treat trailing "Z" as UTC so %z can parse it uniformly.
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
     for fmt in (
-        "%Y-%m-%dT%H:%M:%S.%fZ",
-        "%Y-%m-%dT%H:%M:%SZ",
         "%Y-%m-%dT%H:%M:%S.%f%z",
         "%Y-%m-%dT%H:%M:%S%z",
         "%Y-%m-%d %H:%M:%S.%f",
@@ -35,9 +48,12 @@ def _parse_timestamp(value: str | None) -> datetime | None:
         "%Y-%m-%d",
     ):
         try:
-            return datetime.strptime(value.strip(), fmt)
+            dt = datetime.strptime(s, fmt)
         except ValueError:
             continue
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
     return None
 
 
