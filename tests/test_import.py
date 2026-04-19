@@ -446,6 +446,65 @@ class TestInvalidInput:
             import_kindle_zip(bad, tmp_path / "test.duckdb")
 
 
+class TestUnparseableDate:
+    def test_invalid_relationship_date_becomes_null(self, tmp_path: Path) -> None:
+        """日付パース不能な Relationship Creation Date は NULL で保存され、
+        他の列は通常通り取り込まれる(import 全体は失敗しない)。"""
+        import csv
+        import io
+        import zipfile
+
+        zip_path = tmp_path / "bad_date.zip"
+        fields = [
+            "ASIN", "Product Name", "Sortable Title", "Sortable Author Name",
+            "Series Title", "Series Author", "Position In Collection", "Marketplace",
+            "Relationship Creation Date", "Resource Type", "Ownership Type",
+            "Deleted By Customer",
+        ]
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            buf = io.StringIO()
+            w = csv.DictWriter(buf, fieldnames=fields)
+            w.writeheader()
+            w.writerow({
+                "ASIN": "B000BAD01", "Product Name": "Broken Date Book",
+                "Sortable Title": "Broken", "Sortable Author Name": "A",
+                "Series Title": "", "Series Author": "", "Position In Collection": "",
+                "Marketplace": "JP", "Relationship Creation Date": "not-a-date",
+                "Resource Type": "ITEM", "Ownership Type": "Item Owner",
+                "Deleted By Customer": "",
+            })
+            w.writerow({
+                "ASIN": "B000OK01", "Product Name": "Good Book",
+                "Sortable Title": "Good", "Sortable Author Name": "A",
+                "Series Title": "", "Series Author": "", "Position In Collection": "",
+                "Marketplace": "JP", "Relationship Creation Date": "2024-03-20T08:00:00Z",
+                "Resource Type": "ITEM", "Ownership Type": "Item Owner",
+                "Deleted By Customer": "",
+            })
+            zf.writestr(
+                "Kindle.UnifiedLibraryIndex/CustomerRelationshipIndex_FE.csv",
+                buf.getvalue(),
+            )
+
+        db = tmp_path / "db.duckdb"
+        import_kindle_zip(zip_path, db)
+        con = connect(db, read_only=True)
+        try:
+            row_bad = con.execute(
+                "SELECT product_name, relationship_creation_date FROM books WHERE asin = 'B000BAD01'"
+            ).fetchone()
+            assert row_bad is not None
+            assert row_bad[0] == "Broken Date Book"  # 他の列は正常
+            assert row_bad[1] is None  # 日付は NULL
+
+            row_ok = con.execute(
+                "SELECT relationship_creation_date FROM books WHERE asin = 'B000OK01'"
+            ).fetchone()
+            assert row_ok[0] is not None
+        finally:
+            con.close()
+
+
 class TestEmptyCsv:
     def test_books_csv_headers_only_imports_zero_books(self, tmp_path: Path) -> None:
         """books CSV がヘッダのみ(データ行 0)でも import は成功し、books が空になる。"""
