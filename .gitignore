@@ -28,3 +28,6 @@ htmlcov/
 
 # Ruff
 .ruff_cache/
+
+# Retro
+doc/retro/
