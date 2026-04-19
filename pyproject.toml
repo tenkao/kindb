@@ -22,6 +22,9 @@ dev = [
 [project.scripts]
 kindb = "kindb.cli:app"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/kindb"]
+
 [tool.ruff]
 target-version = "py310"
 line-length = 120
