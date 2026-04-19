@@ -15,8 +15,8 @@ from kindb.db import connect, get_db_path, wal_path
 from kindb.importer import import_kindle_zip
 
 app = typer.Typer(help="Kindle library manager powered by DuckDB.")
-console = Console(width=200)
-err_console = Console(stderr=True, width=200)
+console = Console()
+err_console = Console(stderr=True)
 
 
 def _db_option() -> Path:
