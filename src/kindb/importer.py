@@ -107,6 +107,26 @@ _BOOKS_REQUIRED_COLUMNS = {
 _AUTHORS_REQUIRED_COLUMNS = {"ASIN", "Author Name"}
 _GENRES_REQUIRED_COLUMNS = {"ASIN", "Genre"}
 _IMAGES_REQUIRED_COLUMNS = {"ASIN", "Image URL"}
+_READING_SESSIONS_REQUIRED_COLUMNS = {
+    "ASIN",
+    "Start Timestamp",
+    "End Timestamp",
+    "Total Reading Millis",
+    "Number Of Page Flips",
+    # Content Type はビュー集計に使わないため optional 扱い
+}
+_INSIGHTS_REQUIRED_COLUMNS = {
+    "ASIN",
+    "Product Name",
+    "Start Time",
+    "End Time",
+    "Total Reading Milliseconds",
+}
+_PERSONAL_DOCS_REQUIRED_COLUMNS = {
+    "Document ID",
+    "HasBeenDeleted",
+    # Title / Filename 等は表示用で optional 扱い
+}
 
 
 def _import_books(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> int:
@@ -217,7 +237,7 @@ def _import_reading_sessions(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile
     if path is None:
         return 0
 
-    rows = _read_csv(zf, path)
+    rows = _read_csv(zf, path, required_columns=_READING_SESSIONS_REQUIRED_COLUMNS)
     source = path.split("/")[-1]
     values = []
     for row in rows:
@@ -249,7 +269,7 @@ def _import_reading_insight_sessions(con: duckdb.DuckDBPyConnection, zf: zipfile
     if path is None:
         return
 
-    rows = _read_csv(zf, path)
+    rows = _read_csv(zf, path, required_columns=_INSIGHTS_REQUIRED_COLUMNS)
     source = path.split("/")[-1]
     values = []
     for row in rows:
@@ -279,7 +299,7 @@ def _import_personal_documents(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFi
     if path is None:
         return
 
-    rows = _read_csv(zf, path)
+    rows = _read_csv(zf, path, required_columns=_PERSONAL_DOCS_REQUIRED_COLUMNS)
     source = path.split("/")[-1]
     values = []
     for row in rows:

@@ -639,6 +639,44 @@ class TestRequiredColumns:
             import_kindle_zip(zip_path, db)
         assert not db.exists()
 
+    def test_reading_sessions_csv_missing_timestamp_raises(self, tmp_path: Path) -> None:
+        """reading_sessions CSV で必須列(Start Timestamp)が欠けたら明示エラー。"""
+        body = (
+            "ASIN,End Timestamp,Total Reading Millis,Number Of Page Flips\n"
+            "B000X,2024-06-01T09:30:00Z,1800000,45\n"
+        )
+        zip_path = _write_zip_with_extra_csv(
+            tmp_path / "bad_sessions.zip",
+            extra_csv_path="Kindle.Devices.ReadingSession/Kindle.Devices.ReadingSession.csv",
+            extra_csv_body=body,
+        )
+        with pytest.raises(ValueError, match="Start Timestamp"):
+            import_kindle_zip(zip_path, tmp_path / "db.duckdb")
+
+    def test_insights_csv_missing_time_raises(self, tmp_path: Path) -> None:
+        """reading_insight_sessions CSV で必須列(Start Time)が欠けたら明示エラー。"""
+        body = (
+            "ASIN,Product Name,End Time,Total Reading Milliseconds\n"
+            "B000X,X,2024-06-01T09:30:00Z,1800000\n"
+        )
+        zip_path = _write_zip_with_extra_csv(
+            tmp_path / "bad_insights.zip",
+            extra_csv_path="Kindle.ReadingInsights/sessions_with_adjustments.csv",
+            extra_csv_body=body,
+        )
+        with pytest.raises(ValueError, match="Start Time"):
+            import_kindle_zip(zip_path, tmp_path / "db.duckdb")
+
+    def test_personal_docs_csv_missing_deleted_flag_raises(self, tmp_path: Path) -> None:
+        """personal_documents CSV で必須列(HasBeenDeleted)が欠けたら明示エラー。"""
+        zip_path = _write_zip_with_extra_csv(
+            tmp_path / "bad_docs.zip",
+            extra_csv_path="Kindle.KindleDocs/DocumentMetadata.csv",
+            extra_csv_body="Document ID,Title\nDOC001,My Notes\n",
+        )
+        with pytest.raises(ValueError, match="HasBeenDeleted"):
+            import_kindle_zip(zip_path, tmp_path / "db.duckdb")
+
     def test_authors_csv_missing_author_name_raises(self, tmp_path: Path) -> None:
         """optional な authors CSV でも、必須列 Author Name が欠けたら明示エラー。"""
         zip_path = tmp_path / "bad_authors.zip"
@@ -676,6 +714,39 @@ class TestRequiredColumns:
 
         with pytest.raises(ValueError, match="Author Name"):
             import_kindle_zip(zip_path, tmp_path / "db.duckdb")
+
+
+def _write_zip_with_extra_csv(path: Path, *, extra_csv_path: str, extra_csv_body: str) -> Path:
+    """正常な books CSV + 指定された追加 CSV を含む zip を作る。
+    追加 CSV は必須列欠落などの不正ケースを検証するために使う。"""
+    import csv
+    import io
+    import zipfile
+
+    fields = [
+        "ASIN", "Product Name", "Sortable Title", "Sortable Author Name",
+        "Series Title", "Series Author", "Position In Collection", "Marketplace",
+        "Relationship Creation Date", "Resource Type", "Ownership Type",
+        "Deleted By Customer",
+    ]
+    with zipfile.ZipFile(path, "w") as zf:
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=fields)
+        w.writeheader()
+        w.writerow({
+            "ASIN": "B000X", "Product Name": "X",
+            "Sortable Title": "X", "Sortable Author Name": "A",
+            "Series Title": "", "Series Author": "", "Position In Collection": "",
+            "Marketplace": "JP", "Relationship Creation Date": "2024-01-01T00:00:00Z",
+            "Resource Type": "ITEM", "Ownership Type": "Item Owner",
+            "Deleted By Customer": "",
+        })
+        zf.writestr(
+            "Kindle.UnifiedLibraryIndex/CustomerRelationshipIndex_FE.csv",
+            buf.getvalue(),
+        )
+        zf.writestr(extra_csv_path, extra_csv_body)
+    return path
 
 
 def _write_books_only_zip_multi(path: Path, books: list[tuple[str, str]]) -> Path:
