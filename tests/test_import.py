@@ -64,6 +64,48 @@ class TestImportBasic:
         assert db_path.exists()
         assert db_path.stat().st_size == original_size
 
+    def test_tmp_dir_placed_in_db_parent(
+        self, kindle_zip: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """tmp ディレクトリが db_path.parent 配下に作られる(os.replace が
+        同一 FS 内 rename になる前提を担保)。"""
+        import tempfile as _tempfile
+
+        db_dir = tmp_path / "db_root"
+        db_path = db_dir / "store.duckdb"
+        captured: dict[str, str | None] = {"dir": None}
+        original = _tempfile.mkdtemp
+
+        def _spy(*, dir: str | None = None, **kwargs: object) -> str:
+            captured["dir"] = dir
+            return original(dir=dir, **kwargs)
+
+        monkeypatch.setattr(_tempfile, "mkdtemp", _spy)
+        import_kindle_zip(kindle_zip, db_path)
+
+        assert captured["dir"] is not None
+        assert Path(captured["dir"]) == db_dir
+
+    def test_import_late_failure_cleans_up_tmp_dir(self, tmp_path: Path) -> None:
+        """import 途中(books CSV の必須列欠落)で失敗しても、db_path.parent
+        配下に tmp_* ディレクトリが残らない(connection は closing で閉じ、
+        tmp_dir は finally で削除される)。"""
+        zip_path = _write_books_only_zip(tmp_path, headers=[
+            "ASIN", "Product Name",  # 必須列欠落
+        ], row={"ASIN": "B000X", "Product Name": "X"})
+
+        db_dir = tmp_path / "db_root"
+        db_path = db_dir / "store.duckdb"
+
+        with pytest.raises(ValueError):
+            import_kindle_zip(zip_path, db_path)
+
+        # db_dir は作成されるが、配下に tmp ディレクトリも DB も残らない
+        assert db_dir.exists()
+        assert list(db_dir.iterdir()) == [], (
+            f"失敗時に db_path.parent に残存物がある: {list(db_dir.iterdir())}"
+        )
+
 
 class TestBooksFilter:
     def test_only_item_owner_not_deleted(self, imported_db: Path) -> None:

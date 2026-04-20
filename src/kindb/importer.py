@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import csv
 import io
+import os
 import shutil
 import tempfile
 import zipfile
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -317,40 +319,50 @@ def import_kindle_zip(zip_path: str | Path, db_path: str | Path) -> dict:
     if not zipfile.is_zipfile(zip_path):
         raise ValueError(f"Not a valid zip file: {zip_path}")
 
-    tmp_dir = tempfile.mkdtemp()
-    tmp_db = Path(tmp_dir) / "kindle_tmp.duckdb"
+    # Create the tmp DB in db_path.parent so the final swap can use
+    # os.replace, which is atomic only within a single filesystem.
+    # (The default tempfile.mkdtemp() can land on a different volume,
+    # which falls back to a non-atomic copy+unlink and risks corrupting
+    # the existing DB on an interrupted import.)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_dir = Path(tempfile.mkdtemp(dir=db_path.parent))
+    tmp_db = tmp_dir / "kindle_tmp.duckdb"
 
     try:
-        con = connect(tmp_db)
-        create_schema(con)
+        # `closing` guarantees the DuckDB connection is released even if
+        # an _import_* step raises, so the tmp_dir rmtree in `finally`
+        # does not race against an open connection.
+        with closing(connect(tmp_db)) as con:
+            create_schema(con)
 
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            books_count = _import_books(con, zf)
-            _import_authors(con, zf)
-            _import_genres(con, zf)
-            _import_images(con, zf)
-            reading_sessions_count = _import_reading_sessions(con, zf)
-            _import_reading_insight_sessions(con, zf)
-            _import_personal_documents(con, zf)
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                books_count = _import_books(con, zf)
+                _import_authors(con, zf)
+                _import_genres(con, zf)
+                _import_images(con, zf)
+                reading_sessions_count = _import_reading_sessions(con, zf)
+                _import_reading_insight_sessions(con, zf)
+                _import_personal_documents(con, zf)
 
-        # Singleton: keep exactly one row keyed on import_id=1
-        con.execute("DELETE FROM import_metadata")
-        con.execute(
-            """INSERT INTO import_metadata
-               (import_id, source_path, source_type, imported_at, books_count, reading_sessions_count)
-               VALUES (1, ?, ?, current_timestamp, ?, ?)""",
-            [str(zip_path), "kindle_zip", books_count, reading_sessions_count],
-        )
-        con.close()
+            # Singleton: keep exactly one row keyed on import_id=1
+            con.execute("DELETE FROM import_metadata")
+            con.execute(
+                """INSERT INTO import_metadata
+                   (import_id, source_path, source_type, imported_at, books_count, reading_sessions_count)
+                   VALUES (1, ?, ?, current_timestamp, ?, ?)""",
+                [str(zip_path), "kindle_zip", books_count, reading_sessions_count],
+            )
 
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(tmp_db), str(db_path))
+        # Atomic swap. Because tmp_db is in db_path.parent, this is a
+        # single-filesystem rename and POSIX rename(2) guarantees that
+        # readers either see the old or the new DB, never a partial one.
+        os.replace(tmp_db, db_path)
 
         # Remove any WAL sitting next to the previous db_path. It was
         # written for the old DB and has no relation to the just-swapped
         # file; leaving it would confuse DuckDB on the next open.
-        # (tmp-side WAL, if any, is cleaned up by the tmp_dir rmtree in
-        # the finally block below.)
+        # (tmp-side WAL, if any, is cleaned up by the tmp_dir rmtree
+        # in the finally block below.)
         orphan_wal = wal_path(db_path)
         orphan_wal.unlink(missing_ok=True)
 
@@ -359,10 +371,8 @@ def import_kindle_zip(zip_path: str | Path, db_path: str | Path) -> dict:
             "reading_sessions_count": reading_sessions_count,
             "db_path": str(db_path),
         }
-    except Exception:
-        # On failure, leave existing DB intact
-        if tmp_db.exists():
-            tmp_db.unlink()
-        raise
     finally:
+        # Cleans up tmp_db if os.replace didn't consume it (= failure
+        # path) and any DuckDB side-effect files. The existing db_path
+        # is never touched before os.replace succeeds.
         shutil.rmtree(tmp_dir, ignore_errors=True)
