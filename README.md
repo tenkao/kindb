@@ -1,6 +1,6 @@
 # kindb
 
-公式 `Kindle.zip` を DuckDB に取り込み、CLI や Claude Desktop / Claude Code から Kindle 蔵書と読書セッションを検索・集計・分析できるローカルツール。
+公式 `Kindle.zip` を DuckDB に取り込み、Claude Desktop(MCP 経由) や Claude Code / CLI から Kindle 蔵書と読書セッションを検索・集計・分析できるローカルツール。
 
 - ローカル完結（外部 API への通信なし）
 - DuckDB の列指向エンジンで高速クエリ

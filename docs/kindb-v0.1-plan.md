@@ -14,12 +14,12 @@
 - CLI:
   - `kindb import <Kindle.zip>`: 一時DBに全件取り込み、成功後に既存DBを置換する。
   - `kindb status`: 取り込み件数、最終取り込み日時、蔵書数、著者数、ジャンル数、読書セッション数を表示する。
-  - `kindb search <term>`: `v_books_with_reading` を対象に、書名・著者・ジャンル・シリーズ・ASINを検索する。
-  - `kindb query "<SQL>" [--table]`: 読み取り専用接続で `SELECT` / `WITH` / `SHOW` / `DESCRIBE` 系のSQLだけを実行し、JSON または表形式で出力する。
+  - `kindb search <term>`: `v_books_with_reading` を対象に、書名・著者・ジャンル・シリーズ・ASINを検索する。ユーザー入力の `%` / `_` / `\` はエスケープして `ILIKE ... ESCAPE '\'` で実行し、ワイルドカードを文字通りに扱う。
+  - `kindb query "<SQL>" [--table]`: 読み取り専用接続で `SELECT` / `WITH` / `SHOW` / `DESCRIBE` / `EXPLAIN` / `PRAGMA` のSQLだけを実行し、JSON または表形式で出力する。
   - `kindb authors`: 著者別の所有冊数を多い順に表示する。
   - `kindb genres`: ジャンル別の所有冊数を多い順に表示する。
   - `kindb series`: シリーズ名ごとの所有冊数と所有巻位置を表示する。
-  - `kindb recent`: `relationship_creation_date` が新しい順に直近の本を表示する。
+  - `kindb recent`: `relationship_creation_date` が新しい順に直近の本を表示する(デフォルト 20 件、`--limit/-n` で上書き)。
   - `kindb reading`: `reading_sessions` 由来のASIN別読書セッション数、最終読書日時、合計読書時間、合計ページめくり数を表示する。
   - `kindb delete`: 確認つきでDBを削除する。
 - 読み込む公式zip内ファイル:
@@ -84,7 +84,8 @@
 - `v_reading_summary`, `v_books_with_reading`, `kindb reading` は `reading_sessions` だけを集計元にし、`reading_insight_sessions` を二重計上しないことを確認する。
 - `kindb search` は `ILIKE '%term%'` ベースで、`product_name`, `authors`, `genres`, `series_title`, `asin` を対象に検索することを確認する。
 - `kindb authors`, `genres`, `series`, `recent`, `reading` が定義済みの並び順と列で出力されることを確認する。
-- `kindb query` は読み取り専用で実行され、書き込み系SQLを拒否することを確認する。
+- `kindb query` は読み取り専用で実行され、書き込み系SQLを拒否することを確認する。許可プレフィックスを通過しても read-only 接続で複文書き込みが拒否される二重防御も検証する。
+- 検索入力のワイルドカード文字エスケープ、`reading_insight_sessions` の二重計上防止、再 import で既存データが差し替わること、CSV 必須列欠落時の明示エラー、日付パース不能時の NULL 取り込み、空データ(ヘッダのみ)での 0 件成功も、`tests/` 以下で検証する。
 - 一部ファイル欠落時は、該当テーブルを空にして取り込みを継続する。ただし蔵書本体ファイル欠落時は明示エラーにする。
 - `status`, `search`, `query`, `authors`, `genres`, `series`, `recent`, `reading` の CLI 出力をテストする。
 - 不正zip、不正CSV、空データ、ASIN欠落、日付パース不能をテストする。
