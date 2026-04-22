@@ -1,6 +1,32 @@
+---
+name: kindb
+description: Kindle 蔵書と読書セッションの検索・集計・分析。「Kindle の本」「蔵書」「読書記録」「読んだ本」「読書時間」「著者別冊数」「ジャンル別冊数」に言及された場合や、Kindle ライブラリのキーワード検索、読書傾向分析、読書セッション集計を行う場合にこの Skill を使う。
+---
+
 # kindb SKILL
 
-kindb は公式 `Kindle.zip` を DuckDB に取り込み、Kindle 蔵書と読書セッションをローカルで検索・集計するツール。生成 AI からこの DB を参照するときの指針をまとめる。
+kindb は公式 `Kindle.zip` を DuckDB に取り込み、Kindle 蔵書と読書セッションをローカルで検索・集計するツール。Claude Desktop(MCP 経由) や Claude Code / CLI からこの DB を参照するときの、生成 AI 向け指針をまとめる。
+
+## 前提条件
+
+まず DB の状態を確認する:
+
+```bash
+kindb status
+```
+
+DB が存在しない場合は `kindb import <Kindle.zip>` で取り込みが必要。
+
+## 使い方
+
+```bash
+kindb query "<SQL>"          # JSON 出力(デフォルト)
+kindb query --table "<SQL>"  # テーブル形式出力
+```
+
+許可されるのは `SELECT` / `WITH` / `SHOW` / `DESCRIBE` / `EXPLAIN` / `PRAGMA` のみ。書き込み系 SQL は拒否される。
+
+DB ファイル: `~/.kindb/kindle.duckdb`
 
 ## 基本ルール
 
