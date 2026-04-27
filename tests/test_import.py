@@ -640,9 +640,9 @@ class TestRequiredColumns:
         assert not db.exists()
 
     def test_reading_sessions_csv_missing_timestamp_raises(self, tmp_path: Path) -> None:
-        """reading_sessions CSV で必須列(Start Timestamp)が欠けたら明示エラー。"""
+        """reading_sessions CSV で必須列(start_timestamp)が欠けたら明示エラー。"""
         body = (
-            "ASIN,End Timestamp,Total Reading Millis,Number Of Page Flips\n"
+            "ASIN,end_timestamp,total_reading_millis,number_of_page_flips\n"
             "B000X,2024-06-01T09:30:00Z,1800000,45\n"
         )
         zip_path = _write_zip_with_extra_csv(
@@ -650,13 +650,13 @@ class TestRequiredColumns:
             extra_csv_path="Kindle.Devices.ReadingSession/Kindle.Devices.ReadingSession.csv",
             extra_csv_body=body,
         )
-        with pytest.raises(ValueError, match="Start Timestamp"):
+        with pytest.raises(ValueError, match="start_timestamp"):
             import_kindle_zip(zip_path, tmp_path / "db.duckdb")
 
     def test_insights_csv_missing_time_raises(self, tmp_path: Path) -> None:
-        """reading_insight_sessions CSV で必須列(Start Time)が欠けたら明示エラー。"""
+        """reading_insight_sessions CSV で必須列(start_time)が欠けたら明示エラー。"""
         body = (
-            "ASIN,Product Name,End Time,Total Reading Milliseconds\n"
+            "ASIN,product_name,end_time,total_reading_milliseconds\n"
             "B000X,X,2024-06-01T09:30:00Z,1800000\n"
         )
         zip_path = _write_zip_with_extra_csv(
@@ -664,7 +664,7 @@ class TestRequiredColumns:
             extra_csv_path="Kindle.ReadingInsights/sessions_with_adjustments.csv",
             extra_csv_body=body,
         )
-        with pytest.raises(ValueError, match="Start Time"):
+        with pytest.raises(ValueError, match="start_time"):
             import_kindle_zip(zip_path, tmp_path / "db.duckdb")
 
     def test_personal_docs_csv_missing_deleted_flag_raises(self, tmp_path: Path) -> None:
@@ -672,7 +672,7 @@ class TestRequiredColumns:
         zip_path = _write_zip_with_extra_csv(
             tmp_path / "bad_docs.zip",
             extra_csv_path="Kindle.KindleDocs/DocumentMetadata.csv",
-            extra_csv_body="Document ID,Title\nDOC001,My Notes\n",
+            extra_csv_body="DocumentId,Title\nDOC001,My Notes\n",
         )
         with pytest.raises(ValueError, match="HasBeenDeleted"):
             import_kindle_zip(zip_path, tmp_path / "db.duckdb")

@@ -150,66 +150,69 @@ def create_kindle_zip(path: Path | None = None) -> Path:
         _write_csv(zf, "Kindle.UnifiedLibraryIndex/CustomerTags_FE.csv", tag_rows)
 
         # --- Kindle.Devices.ReadingSession.csv ---
+        # 実データは snake_case のヘッダで出力される
         session_rows = [
             {
                 "ASIN": "B000TEST01",
-                "Start Timestamp": "2024-06-01T09:00:00.000Z",
-                "End Timestamp": "2024-06-01T09:30:00.000Z",
-                "Content Type": "EBOOK",
-                "Total Reading Millis": "1800000",
-                "Number Of Page Flips": "45",
+                "start_timestamp": "2024-06-01T09:00:00.000Z",
+                "end_timestamp": "2024-06-01T09:30:00.000Z",
+                "content_type": "E-Book",
+                "total_reading_millis": "1800000",
+                "number_of_page_flips": "45",
             },
             {
                 "ASIN": "B000TEST01",
-                "Start Timestamp": "2024-06-02T20:00:00.000Z",
-                "End Timestamp": "2024-06-02T20:45:00.000Z",
-                "Content Type": "EBOOK",
-                "Total Reading Millis": "2700000",
-                "Number Of Page Flips": "60",
+                "start_timestamp": "2024-06-02T20:00:00.000Z",
+                "end_timestamp": "2024-06-02T20:45:00.000Z",
+                "content_type": "E-Book",
+                "total_reading_millis": "2700000",
+                "number_of_page_flips": "60",
             },
             {
                 "ASIN": "B000TEST02",
-                "Start Timestamp": "2024-07-01T12:00:00Z",
-                "End Timestamp": "2024-07-01T12:15:00Z",
-                "Content Type": "EBOOK",
-                "Total Reading Millis": "900000",
-                "Number Of Page Flips": "20",
+                "start_timestamp": "2024-07-01T12:00:00Z",
+                "end_timestamp": "2024-07-01T12:15:00Z",
+                "content_type": "E-Book",
+                "total_reading_millis": "900000",
+                "number_of_page_flips": "20",
             },
         ]
         _write_csv(zf, "Kindle.Devices.ReadingSession/Kindle.Devices.ReadingSession.csv", session_rows)
 
         # --- sessions_with_adjustments.csv ---
+        # 実データは snake_case のヘッダで出力される
         insight_rows = [
             {
                 "ASIN": "B000TEST01",
-                "Product Name": "テストの本",
-                "Start Time": "2024-06-01T09:00:00.000Z",
-                "End Time": "2024-06-01T09:30:00.000Z",
-                "Total Reading Milliseconds": "1800000",
+                "product_name": "テストの本",
+                "start_time": "2024-06-01T09:00:00.000Z",
+                "end_time": "2024-06-01T09:30:00.000Z",
+                "total_reading_milliseconds": "1800000",
             },
         ]
         _write_csv(zf, "Kindle.ReadingInsights/sessions_with_adjustments.csv", insight_rows)
 
         # --- DocumentMetadata.csv ---
+        # 実データは PascalCase(空白なし)のヘッダで出力される
         doc_rows = [
             {
-                "Document ID": "DOC001",
+                "DocumentId": "DOC001",
                 "Title": "My Notes",
-                "Document Provider": "User",
+                "DocumentProvider": "User",
                 "Filename": "notes.pdf",
-                "Document Original Type": "application/pdf",
-                "Document Size In Bytes": "102400",
-                "Entry Creation Date": "2024-05-01T10:00:00Z",
+                "DocumentOriginalType": "application/pdf",
+                "DocumentSizeInBytes": "102400",
+                "EntryCreationDate": "2024-05-01T10:00:00Z",
                 "HasBeenDeleted": "",
             },
             {
-                "Document ID": "DOC002",
+                "DocumentId": "DOC002",
                 "Title": "Deleted Doc",
-                "Document Provider": "User",
+                "DocumentProvider": "User",
                 "Filename": "deleted.pdf",
-                "Document Original Type": "application/pdf",
-                "Document Size In Bytes": "51200",
-                "Entry Creation Date": "2024-04-01T10:00:00Z",
+                "DocumentOriginalType": "application/pdf",
+                "DocumentSizeInBytes": "51200",
+                "EntryCreationDate": "2024-04-01T10:00:00Z",
                 "HasBeenDeleted": "Yes",
             },
         ]

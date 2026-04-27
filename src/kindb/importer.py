@@ -109,21 +109,21 @@ _GENRES_REQUIRED_COLUMNS = {"ASIN", "Genre"}
 _IMAGES_REQUIRED_COLUMNS = {"ASIN", "Image URL"}
 _READING_SESSIONS_REQUIRED_COLUMNS = {
     "ASIN",
-    "Start Timestamp",
-    "End Timestamp",
-    "Total Reading Millis",
-    "Number Of Page Flips",
-    # Content Type はビュー集計に使わないため optional 扱い
+    "start_timestamp",
+    "end_timestamp",
+    "total_reading_millis",
+    "number_of_page_flips",
+    # content_type はビュー集計に使わないため optional 扱い
 }
 _INSIGHTS_REQUIRED_COLUMNS = {
     "ASIN",
-    "Product Name",
-    "Start Time",
-    "End Time",
-    "Total Reading Milliseconds",
+    "product_name",
+    "start_time",
+    "end_time",
+    "total_reading_milliseconds",
 }
 _PERSONAL_DOCS_REQUIRED_COLUMNS = {
-    "Document ID",
+    "DocumentId",
     "HasBeenDeleted",
     # Title / Filename 等は表示用で optional 扱い
 }
@@ -246,11 +246,11 @@ def _import_reading_sessions(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile
             continue
         values.append((
             asin,
-            _parse_timestamp(row.get("Start Timestamp")),
-            _parse_timestamp(row.get("End Timestamp")),
-            row.get("Content Type"),
-            _parse_bigint(row.get("Total Reading Millis")),
-            _parse_int(row.get("Number Of Page Flips")),
+            _parse_timestamp(row.get("start_timestamp")),
+            _parse_timestamp(row.get("end_timestamp")),
+            row.get("content_type"),
+            _parse_bigint(row.get("total_reading_millis")),
+            _parse_int(row.get("number_of_page_flips")),
             source,
         ))
     if values:
@@ -278,10 +278,10 @@ def _import_reading_insight_sessions(con: duckdb.DuckDBPyConnection, zf: zipfile
             continue
         values.append((
             asin,
-            row.get("Product Name"),
-            _parse_timestamp(row.get("Start Time")),
-            _parse_timestamp(row.get("End Time")),
-            _parse_bigint(row.get("Total Reading Milliseconds")),
+            row.get("product_name"),
+            _parse_timestamp(row.get("start_time")),
+            _parse_timestamp(row.get("end_time")),
+            _parse_bigint(row.get("total_reading_milliseconds")),
             source,
         ))
     if values:
@@ -306,17 +306,17 @@ def _import_personal_documents(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFi
         deleted = (row.get("HasBeenDeleted") or "").strip()
         if deleted == "Yes":
             continue
-        doc_id = (row.get("Document ID") or "").strip()
+        doc_id = (row.get("DocumentId") or "").strip()
         if not doc_id:
             continue
         values.append((
             doc_id,
             row.get("Title"),
-            row.get("Document Provider"),
+            row.get("DocumentProvider"),
             row.get("Filename"),
-            row.get("Document Original Type"),
-            _parse_bigint(row.get("Document Size In Bytes")),
-            _parse_timestamp(row.get("Entry Creation Date")),
+            row.get("DocumentOriginalType"),
+            _parse_bigint(row.get("DocumentSizeInBytes")),
+            _parse_timestamp(row.get("EntryCreationDate")),
             source,
         ))
     if values:
