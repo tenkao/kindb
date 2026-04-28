@@ -1,398 +1,203 @@
-"""Import Kindle.zip into DuckDB."""
+"""Import kindle.json into DuckDB."""
 
 from __future__ import annotations
 
-import csv
-import io
+import json
 import os
 import shutil
 import tempfile
-import zipfile
+from collections import Counter
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Callable
 
 import duckdb
 
 from kindb.db import connect, create_schema, wal_path
 
+REQUIRED_KEYS = {"title", "authors", "acquiredTime", "readStatus", "asin"}
+KNOWN_KEYS = REQUIRED_KEYS | {"productImage"}
+MAX_ACQUIRED_TIME_MS = 4102444800000
 
-def _find_csv_in_zip(zf: zipfile.ZipFile, suffix: str) -> str | None:
-    for name in zf.namelist():
-        if name.endswith(suffix):
-            return name
-    return None
+WarningHandler = Callable[[str], None]
 
 
-def _parse_timestamp(value: str | None) -> datetime | None:
-    """Parse a timestamp string and return a timezone-naive ``datetime``.
+def _acquired_time_to_datetime(value: int) -> datetime:
+    return datetime.fromtimestamp(value / 1000, tz=timezone.utc).replace(tzinfo=None)
 
-    DuckDB ``TIMESTAMP`` is timezone-naive, so the return value is always
-    naive. The normalization rule is:
 
-    * **Aware input** (``...Z`` or ``...+09:00``) is converted to UTC, then
-      ``tzinfo`` is stripped.
-    * **Naive input** (e.g. ``2024-01-15 10:30:00`` or ``2024-01-15``) is
-      returned as-is without any conversion.
-    * Unparseable input returns ``None``.
-    """
-    if not value or not value.strip():
-        return None
-    s = value.strip()
-    # Treat trailing "Z" as UTC so %z can parse it uniformly.
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    for fmt in (
-        "%Y-%m-%dT%H:%M:%S.%f%z",
-        "%Y-%m-%dT%H:%M:%S%z",
-        "%Y-%m-%d %H:%M:%S.%f",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%d",
-    ):
-        try:
-            dt = datetime.strptime(s, fmt)
-        except ValueError:
+def _item_label(item: Any, index: int) -> str:
+    if isinstance(item, dict):
+        asin = item.get("asin")
+        if isinstance(asin, str) and asin.strip():
+            return f"ASIN {asin}"
+    return f"index {index}"
+
+
+def _is_blank_string(value: Any) -> bool:
+    return isinstance(value, str) and value.strip() == ""
+
+
+def _validate_required(item: dict[str, Any], index: int, errors: list[str]) -> None:
+    label = _item_label(item, index)
+    for key in sorted(REQUIRED_KEYS):
+        if key not in item or item[key] is None or _is_blank_string(item[key]):
+            errors.append(f"{label}: missing or empty required key '{key}'")
+
+
+def _validate_types(item: dict[str, Any], index: int, errors: list[str]) -> None:
+    label = _item_label(item, index)
+    for key in ("title", "authors", "readStatus", "asin"):
+        if key in item and item[key] is not None and not isinstance(item[key], str):
+            errors.append(f"{label}: '{key}' must be str")
+
+    if "productImage" in item and item["productImage"] is not None and not isinstance(item["productImage"], str):
+        errors.append(f"{label}: 'productImage' must be str or null")
+
+    if "acquiredTime" not in item or item["acquiredTime"] is None:
+        return
+    acquired_time = item["acquiredTime"]
+    if isinstance(acquired_time, bool) or not isinstance(acquired_time, int):
+        errors.append(f"{label}: 'acquiredTime' must be int epoch milliseconds")
+        return
+    if not 0 <= acquired_time < MAX_ACQUIRED_TIME_MS:
+        errors.append(
+            f"{label}: 'acquiredTime' must satisfy 0 <= acquiredTime < {MAX_ACQUIRED_TIME_MS}"
+        )
+
+
+def _validate_payload(data: Any, warn: WarningHandler | None = None) -> list[dict[str, Any]]:
+    if not isinstance(data, list):
+        raise ValueError("kindle.json root must be an array")
+
+    errors: list[str] = []
+    rows: list[dict[str, Any]] = []
+    asins: list[str] = []
+
+    for index, item in enumerate(data):
+        if not isinstance(item, dict):
+            errors.append(f"index {index}: each item must be an object")
             continue
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-        return dt
-    return None
+
+        unknown_keys = sorted(set(item) - KNOWN_KEYS)
+        if unknown_keys and warn is not None:
+            warn(f"{_item_label(item, index)}: ignoring unknown keys: {', '.join(unknown_keys)}")
+
+        _validate_required(item, index, errors)
+        _validate_types(item, index, errors)
+
+        asin = item.get("asin")
+        if isinstance(asin, str) and asin.strip():
+            asins.append(asin)
+        rows.append(item)
+
+    duplicates = sorted(asin for asin, count in Counter(asins).items() if count > 1)
+    if duplicates:
+        errors.append(f"Duplicate ASIN values: {', '.join(duplicates)}")
+
+    if errors:
+        raise ValueError("; ".join(errors))
+
+    return rows
 
 
-def _parse_int(value: str | None) -> int | None:
-    if not value or not value.strip():
+def _normalize_product_image(value: Any) -> str | None:
+    if value is None:
         return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _author_values(asin: str, authors_text: str) -> list[tuple[str, str, int]]:
+    authors = [part.strip() for part in authors_text.split(", ")]
+    return [
+        (asin, author, order)
+        for order, author in enumerate((author for author in authors if author), start=1)
+    ]
+
+
+def _load_json(json_path: Path) -> Any:
     try:
-        return int(value.strip())
-    except ValueError:
-        return None
+        with json_path.open(encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON: {e}") from e
 
 
-def _parse_bigint(value: str | None) -> int | None:
-    return _parse_int(value)
-
-
-def _read_csv(
-    zf: zipfile.ZipFile,
-    path: str,
-    *,
-    required_columns: set[str] | None = None,
-) -> list[dict[str, str]]:
-    """Read a CSV from the zip. If required_columns is given, raise ValueError
-    when any of them are absent from the header. Column names are compared
-    case-sensitively to match Amazon's official export."""
-    with zf.open(path) as f:
-        text = io.TextIOWrapper(f, encoding="utf-8-sig")
-        reader = csv.DictReader(text)
-        if required_columns is not None:
-            headers = set(reader.fieldnames or [])
-            missing = required_columns - headers
-            if missing:
-                raise ValueError(
-                    f"{path} is missing required columns: {sorted(missing)}"
-                )
-        return list(reader)
-
-
-# Required columns per optional CSV. Missing any of these raises ValueError
-# rather than silently importing NULLs — a silent 0-row success or all-NULL
-# column is the failure mode we most want to surface to the user.
-_BOOKS_REQUIRED_COLUMNS = {
-    "ASIN",
-    "Resource Type",
-    "Ownership Type",
-    "Deleted By Customer",
-    "Relationship Creation Date",
-}
-_AUTHORS_REQUIRED_COLUMNS = {"ASIN", "Author Name"}
-_GENRES_REQUIRED_COLUMNS = {"ASIN", "Genre"}
-_IMAGES_REQUIRED_COLUMNS = {"ASIN", "Image URL"}
-_READING_SESSIONS_REQUIRED_COLUMNS = {
-    "ASIN",
-    "start_timestamp",
-    "end_timestamp",
-    "total_reading_millis",
-    "number_of_page_flips",
-    # content_type はビュー集計に使わないため optional 扱い
-}
-_INSIGHTS_REQUIRED_COLUMNS = {
-    "ASIN",
-    "product_name",
-    "start_time",
-    "end_time",
-    "total_reading_milliseconds",
-}
-_PERSONAL_DOCS_REQUIRED_COLUMNS = {
-    "DocumentId",
-    "HasBeenDeleted",
-    # Title / Filename 等は表示用で optional 扱い
-}
-
-
-def _import_books(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> int:
-    path = _find_csv_in_zip(zf, "CustomerRelationshipIndex_FE.csv")
-    if path is None:
-        raise FileNotFoundError("CustomerRelationshipIndex_FE.csv not found in zip")
-
-    rows = _read_csv(zf, path, required_columns=_BOOKS_REQUIRED_COLUMNS)
-    source = path.split("/")[-1]
-    values = []
+def _insert_rows(con: duckdb.DuckDBPyConnection, rows: list[dict[str, Any]], imported_at: datetime) -> None:
+    book_values = []
+    author_values = []
     for row in rows:
-        resource_type = (row.get("Resource Type") or "").strip()
-        ownership_type = (row.get("Ownership Type") or "").strip()
-        deleted = (row.get("Deleted By Customer") or "").strip()
-
-        if resource_type != "ITEM" or ownership_type != "Item Owner" or deleted == "Yes":
-            continue
-
-        asin = (row.get("ASIN") or "").strip()
-        if not asin:
-            continue
-
-        values.append((
+        asin = row["asin"]
+        authors_text = row["authors"]
+        book_values.append((
             asin,
-            row.get("Product Name"),
-            row.get("Sortable Title"),
-            row.get("Sortable Author Name"),
-            row.get("Series Title"),
-            row.get("Series Author"),
-            row.get("Position In Collection"),
-            row.get("Marketplace"),
-            _parse_timestamp(row.get("Relationship Creation Date")),
-            source,
+            row["title"],
+            authors_text,
+            _acquired_time_to_datetime(row["acquiredTime"]),
+            row["readStatus"],
+            _normalize_product_image(row.get("productImage")),
+            imported_at,
         ))
+        author_values.extend(_author_values(asin, authors_text))
 
-    if values:
+    if book_values:
         con.executemany(
-            """INSERT INTO books (asin, product_name, sortable_title, sortable_author_name,
-               series_title, series_author, position_in_collection, marketplace,
-               relationship_creation_date, source_file)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            values,
-        )
-    return len(values)
-
-
-def _import_authors(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> None:
-    path = _find_csv_in_zip(zf, "CustomerAuthorNameRelationship_FE.csv")
-    if path is None:
-        return
-
-    rows = _read_csv(zf, path, required_columns=_AUTHORS_REQUIRED_COLUMNS)
-    source = path.split("/")[-1]
-    values = [
-        (asin, row.get("Author Name"), source)
-        for row in rows
-        if (asin := (row.get("ASIN") or "").strip())
-    ]
-    if values:
-        con.executemany(
-            "INSERT INTO book_authors (asin, author_name, source_file) VALUES (?, ?, ?)",
-            values,
-        )
-
-
-def _import_genres(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> None:
-    path = _find_csv_in_zip(zf, "CustomerGenres_FE.csv")
-    if path is None:
-        return
-
-    rows = _read_csv(zf, path, required_columns=_GENRES_REQUIRED_COLUMNS)
-    source = path.split("/")[-1]
-    values = [
-        (asin, row.get("Genre"), source)
-        for row in rows
-        if (asin := (row.get("ASIN") or "").strip())
-    ]
-    if values:
-        con.executemany(
-            "INSERT INTO book_genres (asin, genre, source_file) VALUES (?, ?, ?)",
-            values,
-        )
-
-
-def _import_images(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> None:
-    path = _find_csv_in_zip(zf, "CustomerTags_FE.csv")
-    if path is None:
-        return
-
-    rows = _read_csv(zf, path, required_columns=_IMAGES_REQUIRED_COLUMNS)
-    source = path.split("/")[-1]
-    values = []
-    for row in rows:
-        asin = (row.get("ASIN") or "").strip()
-        image_url = (row.get("Image URL") or "").strip()
-        if not asin or not image_url:
-            continue
-        values.append((asin, image_url, source))
-    if values:
-        con.executemany(
-            "INSERT INTO book_images (asin, image_url, source_file) VALUES (?, ?, ?)",
-            values,
-        )
-
-
-def _import_reading_sessions(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> int:
-    path = _find_csv_in_zip(zf, "Kindle.Devices.ReadingSession.csv")
-    if path is None:
-        return 0
-
-    rows = _read_csv(zf, path, required_columns=_READING_SESSIONS_REQUIRED_COLUMNS)
-    source = path.split("/")[-1]
-    values = []
-    for row in rows:
-        asin = (row.get("ASIN") or "").strip()
-        if not asin:
-            continue
-        values.append((
-            asin,
-            _parse_timestamp(row.get("start_timestamp")),
-            _parse_timestamp(row.get("end_timestamp")),
-            row.get("content_type"),
-            _parse_bigint(row.get("total_reading_millis")),
-            _parse_int(row.get("number_of_page_flips")),
-            source,
-        ))
-    if values:
-        con.executemany(
-            """INSERT INTO reading_sessions
-               (asin, start_timestamp, end_timestamp, content_type,
-                total_reading_millis, number_of_page_flips, source_file)
+            """INSERT INTO books
+               (asin, title, authors_text, acquired_at, read_status, product_image_url, imported_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            values,
+            book_values,
         )
-    return len(values)
-
-
-def _import_reading_insight_sessions(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> None:
-    path = _find_csv_in_zip(zf, "sessions_with_adjustments.csv")
-    if path is None:
-        return
-
-    rows = _read_csv(zf, path, required_columns=_INSIGHTS_REQUIRED_COLUMNS)
-    source = path.split("/")[-1]
-    values = []
-    for row in rows:
-        asin = (row.get("ASIN") or "").strip()
-        if not asin:
-            continue
-        values.append((
-            asin,
-            row.get("product_name"),
-            _parse_timestamp(row.get("start_time")),
-            _parse_timestamp(row.get("end_time")),
-            _parse_bigint(row.get("total_reading_milliseconds")),
-            source,
-        ))
-    if values:
+    if author_values:
         con.executemany(
-            """INSERT INTO reading_insight_sessions
-               (asin, product_name, start_time, end_time,
-                total_reading_milliseconds, source_file)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            values,
+            """INSERT INTO book_authors (asin, author_name, author_order)
+               VALUES (?, ?, ?)""",
+            author_values,
         )
 
 
-def _import_personal_documents(con: duckdb.DuckDBPyConnection, zf: zipfile.ZipFile) -> None:
-    path = _find_csv_in_zip(zf, "DocumentMetadata.csv")
-    if path is None:
-        return
-
-    rows = _read_csv(zf, path, required_columns=_PERSONAL_DOCS_REQUIRED_COLUMNS)
-    source = path.split("/")[-1]
-    values = []
-    for row in rows:
-        deleted = (row.get("HasBeenDeleted") or "").strip()
-        if deleted == "Yes":
-            continue
-        doc_id = (row.get("DocumentId") or "").strip()
-        if not doc_id:
-            continue
-        values.append((
-            doc_id,
-            row.get("Title"),
-            row.get("DocumentProvider"),
-            row.get("Filename"),
-            row.get("DocumentOriginalType"),
-            _parse_bigint(row.get("DocumentSizeInBytes")),
-            _parse_timestamp(row.get("EntryCreationDate")),
-            source,
-        ))
-    if values:
-        con.executemany(
-            """INSERT INTO personal_documents
-               (document_id, title, document_provider, filename,
-                document_original_type, document_size_in_bytes,
-                entry_creation_date, source_file)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            values,
-        )
-
-
-def import_kindle_zip(zip_path: str | Path, db_path: str | Path) -> dict:
-    zip_path = Path(zip_path)
+def import_kindle_json(
+    json_path: str | Path,
+    db_path: str | Path,
+    *,
+    warn: WarningHandler | None = None,
+) -> dict[str, Any]:
+    json_path = Path(json_path)
     db_path = Path(db_path)
 
-    if not zip_path.exists():
-        raise FileNotFoundError(f"Zip file not found: {zip_path}")
-    if not zipfile.is_zipfile(zip_path):
-        raise ValueError(f"Not a valid zip file: {zip_path}")
+    if not json_path.exists():
+        raise FileNotFoundError(f"JSON file not found: {json_path}")
+    if not json_path.is_file():
+        raise ValueError(f"Not a file: {json_path}")
 
-    # Create the tmp DB in db_path.parent so the final swap can use
-    # os.replace, which is atomic only within a single filesystem.
-    # (The default tempfile.mkdtemp() can land on a different volume,
-    # which falls back to a non-atomic copy+unlink and risks corrupting
-    # the existing DB on an interrupted import.)
+    resolved_source = json_path.resolve()
+    data = _load_json(json_path)
+    rows = _validate_payload(data, warn=warn)
+
     db_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_dir = Path(tempfile.mkdtemp(dir=db_path.parent))
     tmp_db = tmp_dir / "kindle_tmp.duckdb"
+    imported_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
     try:
-        # `closing` guarantees the DuckDB connection is released even if
-        # an _import_* step raises, so the tmp_dir rmtree in `finally`
-        # does not race against an open connection.
         with closing(connect(tmp_db)) as con:
             create_schema(con)
-
-            with zipfile.ZipFile(zip_path, "r") as zf:
-                books_count = _import_books(con, zf)
-                _import_authors(con, zf)
-                _import_genres(con, zf)
-                _import_images(con, zf)
-                reading_sessions_count = _import_reading_sessions(con, zf)
-                _import_reading_insight_sessions(con, zf)
-                _import_personal_documents(con, zf)
-
-            # Singleton: keep exactly one row keyed on import_id=1
-            con.execute("DELETE FROM import_metadata")
+            _insert_rows(con, rows, imported_at)
             con.execute(
                 """INSERT INTO import_metadata
-                   (import_id, source_path, source_type, imported_at, books_count, reading_sessions_count)
-                   VALUES (1, ?, ?, current_timestamp, ?, ?)""",
-                [str(zip_path), "kindle_zip", books_count, reading_sessions_count],
+                   (source_path, source_type, books_count, imported_at)
+                   VALUES (?, ?, ?, ?)""",
+                [str(resolved_source), "kindle_json", len(rows), imported_at],
             )
 
-        # Atomic swap. Because tmp_db is in db_path.parent, this is a
-        # single-filesystem rename and POSIX rename(2) guarantees that
-        # readers either see the old or the new DB, never a partial one.
         os.replace(tmp_db, db_path)
-
-        # Remove any WAL sitting next to the previous db_path. It was
-        # written for the old DB and has no relation to the just-swapped
-        # file; leaving it would confuse DuckDB on the next open.
-        # (tmp-side WAL, if any, is cleaned up by the tmp_dir rmtree
-        # in the finally block below.)
-        orphan_wal = wal_path(db_path)
-        orphan_wal.unlink(missing_ok=True)
+        wal_path(db_path).unlink(missing_ok=True)
 
         return {
-            "books_count": books_count,
-            "reading_sessions_count": reading_sessions_count,
+            "books_count": len(rows),
             "db_path": str(db_path),
+            "source_path": str(resolved_source),
         }
     finally:
-        # Cleans up tmp_db if os.replace didn't consume it (= failure
-        # path) and any DuckDB side-effect files. The existing db_path
-        # is never touched before os.replace succeeds.
         shutil.rmtree(tmp_dir, ignore_errors=True)

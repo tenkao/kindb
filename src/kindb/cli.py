@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from kindb.db import connect, get_db_path, wal_path
-from kindb.importer import import_kindle_zip
+from kindb.importer import import_kindle_json
 
 app = typer.Typer(help="Kindle library manager powered by DuckDB.")
 console = Console()
@@ -24,30 +24,33 @@ def _db_option() -> Path:
 
 
 def _escape_like(term: str) -> str:
-    """Escape LIKE/ILIKE wildcards so that user input is matched literally.
-
-    Order matters: escape the backslash first, then the wildcards, otherwise
-    the newly inserted backslashes would get double-escaped.
-    """
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _require_db(db: str | None) -> Path:
+    db_path = get_db_path(db)
+    if not db_path.exists():
+        err_console.print("[yellow]No database found.[/yellow] Run 'kindb import' first.")
+        raise typer.Exit(1)
+    return db_path
 
 
 @app.command("import")
 def import_cmd(
-    zip_path: str = typer.Argument(..., help="Path to Kindle.zip"),
+    json_path: str = typer.Argument(..., help="Path to kindle.json"),
     db: Optional[str] = _db_option(),
 ) -> None:
-    """Import Kindle.zip into the database."""
+    """Import kindle.json into the database."""
     db_path = get_db_path(db)
     try:
-        result = import_kindle_zip(zip_path, db_path)
-        console.print(f"[green]Import complete:[/green] {result['books_count']} books, "
-                       f"{result['reading_sessions_count']} reading sessions")
+        result = import_kindle_json(
+            json_path,
+            db_path,
+            warn=lambda msg: err_console.print(f"[yellow]Warning:[/yellow] {msg}"),
+        )
+        console.print(f"[green]Import complete:[/green] {result['books_count']} books")
         console.print(f"Database: {result['db_path']}")
-    except FileNotFoundError as e:
-        err_console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
-    except ValueError as e:
+    except (FileNotFoundError, ValueError) as e:
         err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
 
@@ -55,31 +58,32 @@ def import_cmd(
 @app.command()
 def status(db: Optional[str] = _db_option()) -> None:
     """Show database status."""
-    db_path = get_db_path(db)
-    if not db_path.exists():
-        err_console.print("[yellow]No database found.[/yellow] Run 'kindb import' first.")
-        raise typer.Exit(1)
+    db_path = _require_db(db)
 
     con = connect(db_path, read_only=True)
     try:
-        meta = con.execute("SELECT * FROM import_metadata LIMIT 1").fetchone()
+        meta = con.execute(
+            "SELECT source_path, source_type, books_count, imported_at FROM import_metadata LIMIT 1"
+        ).fetchone()
         books = con.execute("SELECT count(*) FROM books").fetchone()[0]
         authors = con.execute("SELECT count(DISTINCT author_name) FROM book_authors").fetchone()[0]
-        genres = con.execute("SELECT count(DISTINCT genre) FROM book_genres").fetchone()[0]
-        sessions = con.execute("SELECT count(*) FROM reading_sessions").fetchone()[0]
-        docs = con.execute("SELECT count(*) FROM personal_documents").fetchone()[0]
+        images = con.execute("SELECT count(*) FROM books WHERE product_image_url IS NOT NULL").fetchone()[0]
+        statuses = con.execute(
+            "SELECT read_status, count(*) FROM books GROUP BY read_status ORDER BY read_status"
+        ).fetchall()
 
         table = Table(title="kindb status")
         table.add_column("Item", style="bold")
         table.add_column("Value")
         if meta:
             table.add_row("Last import", str(meta[3]))
-            table.add_row("Source", meta[1])
+            table.add_row("Source", meta[0])
+            table.add_row("Source type", meta[1])
         table.add_row("Books", str(books))
         table.add_row("Authors", str(authors))
-        table.add_row("Genres", str(genres))
-        table.add_row("Reading sessions", str(sessions))
-        table.add_row("Personal documents", str(docs))
+        for read_status, count in statuses:
+            table.add_row(f"Read status: {read_status}", str(count))
+        table.add_row("With image URL", str(images))
         table.add_row("Database", str(db_path))
         console.print(table)
     finally:
@@ -91,26 +95,21 @@ def search(
     term: str = typer.Argument(..., help="Search term"),
     db: Optional[str] = _db_option(),
 ) -> None:
-    """Search books by title, author, genre, series, or ASIN."""
-    db_path = get_db_path(db)
-    if not db_path.exists():
-        err_console.print("[yellow]No database found.[/yellow]")
-        raise typer.Exit(1)
+    """Search books by title, authors, ASIN, or read status."""
+    db_path = _require_db(db)
 
     con = connect(db_path, read_only=True)
     try:
         like = f"%{_escape_like(term)}%"
         rows = con.execute(
-            r"""SELECT asin, product_name, authors, genres, series_title,
-                      reading_session_count, last_read_at
-               FROM v_books_with_reading
-               WHERE product_name ILIKE ? ESCAPE '\'
-                  OR array_to_string(authors, ', ') ILIKE ? ESCAPE '\'
-                  OR array_to_string(genres, ', ') ILIKE ? ESCAPE '\'
-                  OR series_title ILIKE ? ESCAPE '\'
+            r"""SELECT asin, title, authors, read_status, product_image_url, acquired_at
+               FROM v_books
+               WHERE title ILIKE ? ESCAPE '\'
+                  OR authors_text ILIKE ? ESCAPE '\'
                   OR asin ILIKE ? ESCAPE '\'
-               ORDER BY product_name""",
-            [like, like, like, like, like],
+                  OR read_status ILIKE ? ESCAPE '\'
+               ORDER BY title""",
+            [like, like, like, like],
         ).fetchall()
 
         if not rows:
@@ -121,20 +120,11 @@ def search(
         table.add_column("ASIN", style="dim")
         table.add_column("Title")
         table.add_column("Authors")
-        table.add_column("Genres")
-        table.add_column("Series")
-        table.add_column("Sessions", justify="right")
-        table.add_column("Last Read")
+        table.add_column("Status")
+        table.add_column("Image URL")
+        table.add_column("Acquired")
         for row in rows:
-            table.add_row(
-                row[0],
-                row[1] or "",
-                ", ".join(row[2]) if row[2] else "",
-                ", ".join(row[3]) if row[3] else "",
-                row[4] or "",
-                str(row[5] or 0),
-                str(row[6] or ""),
-            )
+            table.add_row(row[0], row[1], _format_value(row[2]), row[3], row[4] or "", _format_value(row[5]))
         console.print(table)
     finally:
         con.close()
@@ -150,10 +140,7 @@ def query(
     db: Optional[str] = _db_option(),
 ) -> None:
     """Run a read-only SQL query."""
-    db_path = get_db_path(db)
-    if not db_path.exists():
-        err_console.print("[yellow]No database found.[/yellow]")
-        raise typer.Exit(1)
+    db_path = _require_db(db)
 
     if not _ALLOWED_SQL.match(sql):
         err_console.print(
@@ -181,58 +168,24 @@ def query(
         con.close()
 
 
-def _format_value(v: object) -> str:
-    if v is None:
+def _format_value(value: object) -> str:
+    if value is None:
         return ""
-    if isinstance(v, list):
-        return ", ".join(str(x) for x in v)
-    return str(v)
+    if isinstance(value, list):
+        return ", ".join(str(x) for x in value)
+    return str(value)
 
 
 @app.command()
 def authors(db: Optional[str] = _db_option()) -> None:
     """Show authors by book count."""
-    _run_agg_query(
+    _run_table_query(
         db,
-        """SELECT ba.author_name AS author, count(DISTINCT ba.asin) AS books
-           FROM book_authors ba
-           JOIN books b ON ba.asin = b.asin
-           GROUP BY ba.author_name
-           ORDER BY books DESC, author""",
+        """SELECT author_name, book_count
+           FROM v_author_counts
+           ORDER BY book_count DESC, author_name ASC""",
         title="Authors",
         columns=[("Author", None), ("Books", "right")],
-    )
-
-
-@app.command()
-def genres(db: Optional[str] = _db_option()) -> None:
-    """Show genres by book count."""
-    _run_agg_query(
-        db,
-        """SELECT bg.genre, count(DISTINCT bg.asin) AS books
-           FROM book_genres bg
-           JOIN books b ON bg.asin = b.asin
-           GROUP BY bg.genre
-           ORDER BY books DESC, genre""",
-        title="Genres",
-        columns=[("Genre", None), ("Books", "right")],
-    )
-
-
-@app.command()
-def series(db: Optional[str] = _db_option()) -> None:
-    """Show series with book counts and positions."""
-    _run_agg_query(
-        db,
-        """SELECT series_title, series_author,
-                  count(*) AS books,
-                  string_agg(DISTINCT position_in_collection, ', ' ORDER BY position_in_collection) AS positions
-           FROM books
-           WHERE series_title IS NOT NULL AND series_title != ''
-           GROUP BY series_title, series_author
-           ORDER BY books DESC, series_title""",
-        title="Series",
-        columns=[("Series", None), ("Author", None), ("Books", "right"), ("Positions", None)],
     )
 
 
@@ -241,42 +194,23 @@ def recent(
     limit: int = typer.Option(20, "--limit", "-n", help="Number of books to show"),
     db: Optional[str] = _db_option(),
 ) -> None:
-    """Show recently added books."""
-    _run_agg_query(
+    """Show recently acquired books."""
+    _run_table_query(
         db,
-        """SELECT asin, product_name, sortable_author_name, relationship_creation_date
-           FROM books
-           ORDER BY relationship_creation_date DESC NULLS LAST
+        """SELECT asin, title, authors, read_status, product_image_url, acquired_at
+           FROM v_books
+           ORDER BY acquired_at DESC
            LIMIT ?""",
         title="Recent Books",
-        columns=[("ASIN", "dim"), ("Title", None), ("Author", None), ("Added", None)],
-        params=[limit],
-    )
-
-
-@app.command()
-def reading(db: Optional[str] = _db_option()) -> None:
-    """Show reading session summary per book."""
-    _run_agg_query(
-        db,
-        """SELECT rs.asin,
-                  b.product_name,
-                  rs.reading_session_count AS sessions,
-                  rs.last_read_at AS last_read,
-                  rs.total_reading_millis AS total_millis,
-                  rs.total_page_flips AS total_flips
-           FROM v_reading_summary rs
-           LEFT JOIN books b ON rs.asin = b.asin
-           ORDER BY last_read DESC NULLS LAST""",
-        title="Reading Sessions",
         columns=[
             ("ASIN", "dim"),
             ("Title", None),
-            ("Sessions", "right"),
-            ("Last Read", None),
-            ("Total ms", "right"),
-            ("Page Flips", "right"),
+            ("Authors", None),
+            ("Status", None),
+            ("Image URL", None),
+            ("Acquired", None),
         ],
+        params=[limit],
     )
 
 
@@ -287,7 +221,7 @@ def delete(
 ) -> None:
     """Delete the database."""
     db_path = get_db_path(db)
-    if not db_path.exists():
+    if not db_path.exists() and not wal_path(db_path).exists():
         console.print("No database to delete.")
         return
 
@@ -297,14 +231,12 @@ def delete(
             console.print("Cancelled.")
             return
 
-    db_path.unlink()
-    wal = wal_path(db_path)
-    if wal.exists():
-        wal.unlink()
+    db_path.unlink(missing_ok=True)
+    wal_path(db_path).unlink(missing_ok=True)
     console.print(f"[green]Deleted:[/green] {db_path}")
 
 
-def _run_agg_query(
+def _run_table_query(
     db: str | None,
     sql: str,
     *,
@@ -312,11 +244,7 @@ def _run_agg_query(
     columns: list[tuple[str, str | None]],
     params: list | None = None,
 ) -> None:
-    db_path = get_db_path(db)
-    if not db_path.exists():
-        err_console.print("[yellow]No database found.[/yellow]")
-        raise typer.Exit(1)
-
+    db_path = _require_db(db)
     con = connect(db_path, read_only=True)
     try:
         rows = con.execute(sql, params or []).fetchall()

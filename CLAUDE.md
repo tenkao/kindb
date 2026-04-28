@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-kindb は公式 Kindle.zip を DuckDB に取り込み、Claude Desktop(MCP 経由) や Claude Code / CLI から Kindle 蔵書と読書セッションを検索・集計するローカルツール。Python パッケージとして実装。
+kindb は Chrome 拡張などで取得した `kindle.json` を DuckDB に取り込み、Claude Desktop(MCP 経由) や Claude Code / CLI から Kindle 蔵書を検索・集計するローカルツール。Python パッケージとして実装。
 
-設計・スキーマ・スコープの詳細は @docs/kindb-v0.1-plan.md を参照。
+設計・スキーマ・スコープの詳細は @docs/kindb-v0.2-plan.md を参照。
 使い方・主要ビュー・MCP 設定は @README.md を参照。
 生成 AI 向けクエリガイドは @SKILL.md を参照。
 
@@ -29,7 +29,7 @@ ruff check .
 
 # Test
 pytest
-pytest tests/test_import.py::test_specific -v  # single test
+pytest tests/test_import.py::test_import_creates_db -v
 
 # Lint + Test
 ruff check . && pytest

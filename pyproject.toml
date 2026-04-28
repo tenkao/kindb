@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kindb"
-version = "0.1.0"
-description = "Import official Kindle.zip into DuckDB for local search and analysis"
+version = "0.2.0"
+description = "Import Kindle library JSON into DuckDB for local search and analysis"
 requires-python = ">=3.10"
 dependencies = [
     "duckdb>=1.0",
