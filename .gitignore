@@ -31,4 +31,4 @@ tests/fixtures/kindle.json
 .ruff_cache/
 
 # Retro
-doc/retro/
+docs/retro/
