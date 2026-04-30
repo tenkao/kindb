@@ -26,6 +26,12 @@ def _book(asin: str, book_title: str, **overrides: object) -> dict[str, object]:
     return row
 
 
+def _book_without(asin: str, book_title: str, missing: str) -> dict[str, object]:
+    row = _book(asin, book_title)
+    row.pop(missing, None)
+    return row
+
+
 def test_import_creates_db(kindle_json: Path, db_path: Path) -> None:
     result = import_kindle_json(kindle_json, db_path)
     assert db_path.exists()
@@ -103,6 +109,10 @@ def test_failed_import_cleans_up_tmp_dir(tmp_path: Path) -> None:
         ({"not": "array"}, "root must be an array"),
         ([1], "each item must be an object"),
         ([_book("B000MISS01", "Missing", title="")], "missing or empty required key 'title'"),
+        ([_book("B000MISS02", "Missing", authors="")], "missing or empty required key 'authors'"),
+        ([_book("B000MISS03", "Missing", readStatus=None)], "missing or empty required key 'readStatus'"),
+        ([_book_without("B000MISS04", "Missing", "acquiredTime")], "missing or empty required key 'acquiredTime'"),
+        ([{**_book("B000MISS05", "Missing"), "asin": None}], "index 0: missing or empty required key 'asin'"),
         ([_book("B000TYPE01", "Type", title=123)], "'title' must be str"),
         ([_book("B000TYPE02", "Type", productImage={})], "'productImage' must be str or null"),
         ([_book("B000TIME01", "Time", acquiredTime="123")], "'acquiredTime' must be int"),

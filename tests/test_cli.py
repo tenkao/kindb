@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from kindb.cli import app
@@ -93,6 +94,12 @@ def test_search_by_read_status(imported_db: Path) -> None:
     assert "B000TEST04" in result.output
 
 
+def test_search_is_case_insensitive(imported_db: Path) -> None:
+    result = runner.invoke(app, ["search", "reading", "--db", str(imported_db)])
+    assert result.exit_code == 0
+    assert "B000TEST04" in result.output
+
+
 def test_search_no_results(imported_db: Path) -> None:
     result = runner.invoke(app, ["search", "ZZZNOTFOUND", "--db", str(imported_db)])
     assert result.exit_code == 0
@@ -146,6 +153,20 @@ def test_query_allows_with(imported_db: Path) -> None:
         app,
         ["query", "WITH c AS (SELECT count(*) AS n FROM books) SELECT * FROM c", "--db", str(imported_db)],
     )
+    assert result.exit_code == 0
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SHOW TABLES",
+        "DESCRIBE v_books",
+        "EXPLAIN SELECT 1",
+        "PRAGMA database_list",
+    ],
+)
+def test_query_allows_readonly_prefixes(imported_db: Path, sql: str) -> None:
+    result = runner.invoke(app, ["query", sql, "--db", str(imported_db)])
     assert result.exit_code == 0
 
 

@@ -121,7 +121,7 @@ p.write_text(json.dumps([{
   "extra": "ignored"
 }], ensure_ascii=False), encoding="utf-8")
 PY
-kindb import /tmp/kindb_manual/unknown.json --db "$TEST_DB"
+kindb import /tmp/kindb_manual/unknown.json --db /tmp/kindb_manual/unknown.duckdb
 ```
 
 期待: stderr に `Warning:` が出るが import は成功する。
@@ -201,13 +201,32 @@ kindb recent -n 1 --db "$TEST_DB"
 
 ## 7. delete
 
+確認プロンプト (`--yes` なし):
+
 ```bash
+kindb import tests/fixtures/kindle.json --db "$TEST_DB"
+echo "n" | kindb delete --db "$TEST_DB"; echo "exit=$?"
+ls -la "$TEST_DB"
+
+echo "y" | kindb delete --db "$TEST_DB"; echo "exit=$?"
+ls -la "$TEST_DB"* 2>/dev/null; echo "ls exit=$?"
+```
+
+期待:
+- `n` 入力ではキャンセルされ、DB は残る。
+- `y` 入力で削除される。
+
+`--yes` スキップ + WAL 除去:
+
+```bash
+kindb import tests/fixtures/kindle.json --db "$TEST_DB"
 echo "fake-wal" > "$TEST_DB.wal"
 kindb delete --yes --db "$TEST_DB"
 ls -la "$TEST_DB"*
 ```
 
 期待:
+- 確認プロンプトが出ずに削除される。
 - DB 本体と `<db_path>.wal` が両方削除される。
 
 ## 8. ビュー確認
@@ -217,9 +236,32 @@ kindb import tests/fixtures/kindle.json --db "$TEST_DB"
 kindb query --table "SHOW TABLES" --db "$TEST_DB"
 kindb query --table "SELECT * FROM v_books ORDER BY asin" --db "$TEST_DB"
 kindb query --table "SELECT * FROM v_author_counts" --db "$TEST_DB"
+kindb query --table "
+  SELECT b.asin, b.authors AS v_books_authors,
+         list(ba.author_name ORDER BY ba.author_order) AS expected_authors,
+         b.authors_text
+  FROM v_books b
+  JOIN book_authors ba USING (asin)
+  GROUP BY b.asin, b.authors, b.authors_text
+  HAVING len(b.authors) >= 2
+  ORDER BY b.asin
+" --db "$TEST_DB"
 ```
 
 期待:
-- テーブル/ビューは `books`, `book_authors`, `import_metadata`, `v_books`, `v_author_counts` のみ。
-- `v_books.authors` は `author_order` 順。
-- `v_author_counts` は `book_count DESC, author_name ASC`。
+- `SHOW TABLES`: テーブル/ビューは `books`, `book_authors`, `import_metadata`, `v_books`, `v_author_counts` のみ。
+- `SELECT * FROM v_books`: 1 ASIN 1 行で並び、`authors` 配列・`authors_text`・`product_image_url`・`read_status`・`acquired_at` が表示される。
+- `SELECT * FROM v_author_counts`: `book_count DESC, author_name ASC` で並ぶ。
+- 著者順検証クエリ: 全行で `v_books_authors = expected_authors`、かつ `authors_text` を `, ` で分割した順と一致する。
+
+## 9. 後片付け
+
+```bash
+rm -rf /tmp/kindb_manual
+unset TEST_DB
+```
+
+期待:
+- `/tmp/kindb_manual` 配下のテスト用 DB / fixture / WAL が全て削除される。
+- `$TEST_DB` 環境変数が解除され、以降のうっかり操作で本番 DB に流れない。
+- 本番 DB (`~/.kindb/kindle.duckdb`) には一切触れていないこと（シナリオ中は常に `--db "$TEST_DB"` を指定する前提）。
