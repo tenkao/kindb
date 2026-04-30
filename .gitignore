@@ -10,6 +10,9 @@ build/
 .venv/
 venv/
 
+# uv (codex がレビュー時に uv run を使う際の副産物。プロジェクト正規セットアップは pip + venv)
+uv.lock
+
 # DuckDB
 *.duckdb
 *.duckdb.wal
