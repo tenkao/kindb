@@ -1,6 +1,6 @@
 # kindb
 
-Chrome 拡張「[Kindle bookshelf exporter](https://chromewebstore.google.com/detail/kindle-bookshelf-exporter/olimpmeljimffgjonlpmiaebaonnegdp)」で取得した `kindle.json` を DuckDB に取り込み、Claude Desktop（MCP 経由）や Claude Code / CLI から Kindle 蔵書を検索・集計できるローカルツール。
+Chrome 拡張「[Kindle bookshelf exporter](https://chromewebstore.google.com/detail/kindle-bookshelf-exporter/olimpmeljimffgjonlpmiaebaonnegdp)」で取得した Kindle 蔵書データ `kindle.json` を DuckDB に取り込み、Claude Desktop や Claude Code / CLI から検索・集計・分析するツール。
 
 - ローカル完結（外部 API への通信なし）
 - DuckDB の列指向エンジンで高速クエリ
