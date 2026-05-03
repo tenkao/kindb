@@ -1,12 +1,11 @@
 # kindb
 
-Chrome 拡張などで取得した `kindle.json` を DuckDB に取り込み、Claude Desktop(MCP 経由) や Claude Code / CLI から Kindle 蔵書を検索・集計できるローカルツール。
+Chrome 拡張「[Kindle bookshelf exporter](https://chromewebstore.google.com/detail/kindle-bookshelf-exporter/olimpmeljimffgjonlpmiaebaonnegdp)」で取得した `kindle.json` を DuckDB に取り込み、Claude Desktop（MCP 経由）や Claude Code / CLI から Kindle 蔵書を検索・集計できるローカルツール。
 
 - ローカル完結（外部 API への通信なし）
 - DuckDB の列指向エンジンで高速クエリ
-- Claude Desktop / Claude Code からは MCP サーバ (`mcp-server-motherduck`) 経由で DB を直接参照
-- 生成 AI 向けクエリガイド (`SKILL.md`) 同梱
-- 読了マークは自己申告フラグとして保存し、未読とは断定しない
+- Claude Desktop からは MCP サーバ（`mcp-server-motherduck`）経由で DB を直接参照
+- Claude Code 向け `SKILL.md` 同梱
 
 ## 使用データ
 
@@ -19,7 +18,7 @@ Chrome 拡張などで取得した `kindle.json` を DuckDB に取り込み、Cl
 - `asin`
 - `productImage`（任意）
 
-`kindle.json` の取得元 Chrome 拡張は固定しない。上記フォーマットに合う JSON を `kindb import` に渡す。
+上記フォーマットに合う JSON を `kindb import` に渡す。
 
 ## インストール
 
@@ -36,7 +35,7 @@ pip install -e ".[dev]"
 ### データの取り込み
 
 ```bash
-kindb import ~/Downloads/kindle.json
+kindb import path/to/kindle.json
 ```
 
 一時 DB に全件取り込み、成功後に既存 DB を置換する。初回・更新とも同じコマンド。差分更新ではなく最新 JSON を毎回フルインポートする。失敗時は既存 DB が残る。
@@ -54,7 +53,7 @@ kindb status
 ### 検索
 
 ```bash
-kindb search マンガ
+kindb search ○○○
 ```
 
 `v_books` に対し、書名・著者文字列・ASIN・読書状態を `ILIKE` で検索する。検索語中の `%` / `_` / `\` はリテラルとして扱う。
@@ -92,7 +91,7 @@ kindb delete --yes    # 確認スキップ
 
 ## 扱わない項目
 
-`kindle.json` からは確定できないため、kindb では保存せず、AI からの問い合わせでも断定しない:
+`kindle.json` からは確定できないため、kindb では保存せず、AI からの問い合わせでも断定しない。
 
 - 発売日、出版社、購入価格
 - Kindle Unlimited 判定、購入経路
@@ -146,7 +145,6 @@ ruff check . && pytest
 
 - [`docs/kindb-v0.2-plan.md`](docs/kindb-v0.2-plan.md): 実装計画、スキーマ・スコープの公式記述
 - [`SKILL.md`](SKILL.md): 生成 AI 向けクエリガイド（代表クエリ集含む）
-- [`CLAUDE.md`](CLAUDE.md): Claude Code 向け作業指示
 
 ## ライセンス
 
