@@ -167,15 +167,18 @@ kindb search "A\\B" --db "$TEST_DB"
 
 ```bash
 kindb query "SELECT count(*) AS n FROM books" --db "$TEST_DB"
-kindb query --table "SELECT asin, title, read_status FROM v_books ORDER BY asin" --db "$TEST_DB"
+kindb query --table "SELECT asin, title, read_status FROM v_books ORDER BY asin LIMIT 20 OFFSET 0" --db "$TEST_DB"
+kindb query --table "SELECT asin, title, read_status FROM v_books ORDER BY asin" --db "$TEST_DB"; echo "exit=$?"
+kindb query --allow-unlimited --table "SELECT asin, title, read_status FROM v_books ORDER BY asin" --db "$TEST_DB"
 kindb query "DELETE FROM books" --db "$TEST_DB"; echo "exit=$?"
 kindb query "SELECT 1; UPDATE books SET title='hacked' WHERE asin='B000TEST01'" --db "$TEST_DB"; echo "exit=$?"
 ```
 
 期待:
-- SELECT は JSON または table で表示される。
+- `count(*)` と `LIMIT/OFFSET` 付き SELECT は JSON または table で表示される。
+- 行返却 SELECT は `LIMIT` なしでは拒否されて `exit=1` になり、`--allow-unlimited` 付きなら実行できる。
 - 書き込み系 SQL は拒否される。
-- 先頭 SELECT の複文書き込みも read-only 接続で失敗し、DB は変わらない。
+- 先頭 SELECT の複文書き込みも単一文チェックで拒否されて `exit=1` になり、DB は変わらない。
 
 ## 5. authors
 
@@ -234,8 +237,8 @@ ls -la "$TEST_DB"*
 ```bash
 kindb import tests/fixtures/kindle.json --db "$TEST_DB"
 kindb query --table "SHOW TABLES" --db "$TEST_DB"
-kindb query --table "SELECT * FROM v_books ORDER BY asin" --db "$TEST_DB"
-kindb query --table "SELECT * FROM v_author_counts" --db "$TEST_DB"
+kindb query --table "SELECT * FROM v_books ORDER BY asin LIMIT 20 OFFSET 0" --db "$TEST_DB"
+kindb query --table "SELECT * FROM v_author_counts ORDER BY book_count DESC, author_name ASC LIMIT 20 OFFSET 0" --db "$TEST_DB"
 kindb query --table "
   SELECT b.asin, b.authors AS v_books_authors,
          list(ba.author_name ORDER BY ba.author_order) AS expected_authors,
@@ -245,6 +248,7 @@ kindb query --table "
   GROUP BY b.asin, b.authors, b.authors_text
   HAVING len(b.authors) >= 2
   ORDER BY b.asin
+  LIMIT 20 OFFSET 0
 " --db "$TEST_DB"
 ```
 

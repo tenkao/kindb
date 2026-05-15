@@ -31,6 +31,9 @@ DB ファイル: `~/.kindb/kindle.duckdb`
 ## 基本ルール
 
 - **通常は `v_books` を使う**。正規化テーブル(`books`, `book_authors`)を直接参照するのは集計やデバッグ用途に限る。
+- 一覧取得は必ず `LIMIT/OFFSET` を付ける。全件が必要な場合も一度に取得しない。
+- 全件回答が必要な場合は、まず `SELECT count(*)` で総数を確認し、必要な範囲を `LIMIT N OFFSET M` で反復取得する。取得件数が総数と一致してから回答する。
+- `product_image_url` は出力サイズが大きくなりやすいため、表紙画像が必要なときだけ選択する。
 - `READ` はユーザーが Kindle 上で付けた読了マークの自己申告フラグ。集計に使ってよい。
 - `UNKNOWN` は「読了マークなし」。**未読とは断定しない**。読み始めていても READ マークを付けていない場合は `UNKNOWN` のまま。
 - 「未読書籍」を聞かれた場合は `WHERE read_status = 'UNKNOWN'` を使ってよいが、回答文では「読了マークが付いていない本」と言い換える。
@@ -38,6 +41,20 @@ DB ファイル: `~/.kindb/kindle.duckdb`
   - 発売日 / 出版社 / 購入価格
   - Kindle Unlimited 判定 / 購入経路
   - マンガ / 固定レイアウト判定
+
+## ページング標準フロー
+
+```sql
+SELECT count(*) AS n
+FROM v_books;
+
+SELECT asin, title, authors_text, read_status, acquired_at
+FROM v_books
+ORDER BY acquired_at DESC
+LIMIT 50 OFFSET 0;
+```
+
+必要な場合だけ `OFFSET` を `50`, `100`, ... と進めて取得する。`mcp-server-motherduck` の `--max-rows` / `--max-chars` は返却時の打ち切り設定であり、ページングの代替ではない。
 
 ## 主要ビュー
 
@@ -88,7 +105,8 @@ LIMIT 20;
 SELECT title, authors, acquired_at
 FROM v_books
 WHERE read_status = 'READ'
-ORDER BY acquired_at DESC;
+ORDER BY acquired_at DESC
+LIMIT 50 OFFSET 0;
 ```
 
 ### 読了マークが付いていない本
@@ -97,7 +115,8 @@ ORDER BY acquired_at DESC;
 SELECT title, authors, acquired_at
 FROM v_books
 WHERE read_status = 'UNKNOWN'
-ORDER BY acquired_at DESC;
+ORDER BY acquired_at DESC
+LIMIT 50 OFFSET 0;
 ```
 
 回答では「未読」ではなく「読了マークが付いていない本」と表現する。
@@ -107,7 +126,8 @@ ORDER BY acquired_at DESC;
 ```sql
 SELECT title, authors, read_status, product_image_url
 FROM v_books
-ORDER BY title;
+ORDER BY title
+LIMIT 20 OFFSET 0;
 ```
 
 ## 注意

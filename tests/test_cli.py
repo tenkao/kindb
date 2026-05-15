@@ -142,16 +142,63 @@ def test_query_table(imported_db: Path) -> None:
     assert "B000TEST01" in result.output
 
 
+def test_query_allows_limit_without_offset(imported_db: Path) -> None:
+    result = runner.invoke(app, ["query", "SELECT asin FROM books ORDER BY asin LIMIT 1", "--db", str(imported_db)])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data[0]["asin"] == "B000TEST01"
+
+
+def test_query_allows_limit_with_offset(imported_db: Path) -> None:
+    result = runner.invoke(
+        app, ["query", "SELECT asin FROM books ORDER BY asin LIMIT 1 OFFSET 1", "--db", str(imported_db)]
+    )
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data[0]["asin"] == "B000TEST02"
+
+
+def test_query_rejects_select_without_limit(imported_db: Path) -> None:
+    result = runner.invoke(app, ["query", "SELECT asin FROM books ORDER BY asin", "--db", str(imported_db)])
+    assert result.exit_code == 1
+    assert "LIMIT 100 OFFSET 0" in result.output
+    assert "--allow-unlimited" in result.output
+
+
+def test_query_rejects_select_without_limit_in_table_mode(imported_db: Path) -> None:
+    result = runner.invoke(app, ["query", "SELECT asin FROM books ORDER BY asin", "--table", "--db", str(imported_db)])
+    assert result.exit_code == 1
+    assert "LIMIT 100 OFFSET 0" in result.output
+    assert "--allow-unlimited" in result.output
+
+
+def test_query_allows_unlimited_when_explicit(imported_db: Path) -> None:
+    result = runner.invoke(
+        app, ["query", "--allow-unlimited", "SELECT asin FROM books ORDER BY asin", "--db", str(imported_db)]
+    )
+    assert result.exit_code == 0
+    assert "--allow-unlimited" not in result.output
+
+
 def test_query_rejects_write(imported_db: Path) -> None:
     result = runner.invoke(app, ["query", "DELETE FROM books", "--db", str(imported_db)])
     assert result.exit_code == 1
     assert "Only SELECT" in result.output
 
 
-def test_query_allows_with(imported_db: Path) -> None:
+def test_query_rejects_with_without_top_level_limit(imported_db: Path) -> None:
     result = runner.invoke(
         app,
         ["query", "WITH c AS (SELECT count(*) AS n FROM books) SELECT * FROM c", "--db", str(imported_db)],
+    )
+    assert result.exit_code == 1
+    assert "LIMIT 100 OFFSET 0" in result.output
+
+
+def test_query_allows_with_top_level_limit(imported_db: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["query", "WITH c AS (SELECT count(*) AS n FROM books) SELECT * FROM c LIMIT 1", "--db", str(imported_db)],
     )
     assert result.exit_code == 0
 
@@ -170,14 +217,101 @@ def test_query_allows_readonly_prefixes(imported_db: Path, sql: str) -> None:
     assert result.exit_code == 0
 
 
-def test_query_compound_write_rejected_by_readonly(imported_db: Path) -> None:
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT count(*) FROM v_books",
+        "SELECT count(*) AS n FROM v_books",
+        "SELECT count(distinct asin) AS n FROM v_books",
+        "SELECT sum(book_count) FROM v_author_counts",
+        "SELECT avg(book_count), min(book_count), max(book_count) FROM v_author_counts",
+    ],
+)
+def test_query_allows_simple_aggregate_without_limit(imported_db: Path, sql: str) -> None:
+    result = runner.invoke(app, ["query", sql, "--db", str(imported_db)])
+    assert result.exit_code == 0
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT read_status, count(*) FROM books GROUP BY read_status",
+        "SELECT author_name, count(*) FROM book_authors GROUP BY author_name",
+    ],
+)
+def test_query_rejects_grouped_aggregate_without_limit(imported_db: Path, sql: str) -> None:
+    result = runner.invoke(app, ["query", sql, "--db", str(imported_db)])
+    assert result.exit_code == 1
+    assert "LIMIT 100 OFFSET 0" in result.output
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT count(*)::VARCHAR FROM books UNION ALL SELECT title FROM v_books",
+        "SELECT count(*)::VARCHAR FROM books INTERSECT SELECT title FROM v_books",
+        "SELECT count(*)::VARCHAR FROM books EXCEPT SELECT title FROM v_books",
+    ],
+)
+def test_query_rejects_set_operation_aggregate_without_limit(imported_db: Path, sql: str) -> None:
+    result = runner.invoke(app, ["query", sql, "--db", str(imported_db)])
+    assert result.exit_code == 1
+    assert "LIMIT 100 OFFSET 0" in result.output
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT asin FROM books ORDER BY asin Limit 1",
+        "SELECT asin FROM books ORDER BY asin LIMIT 1;",
+        "SELECT asin FROM books ORDER BY asin limit 1  ",
+    ],
+)
+def test_query_accepts_limit_case_and_trailing_semicolon(imported_db: Path, sql: str) -> None:
+    result = runner.invoke(app, ["query", sql, "--db", str(imported_db)])
+    assert result.exit_code == 0
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT 'LIMIT' AS x FROM v_books",
+        "SELECT asin FROM books -- LIMIT 10",
+        "SELECT asin FROM books /* LIMIT 10 */",
+        "SELECT * FROM (SELECT * FROM v_books LIMIT 10) t",
+        "WITH t AS (SELECT * FROM v_books LIMIT 10) SELECT * FROM t",
+        "SELECT * FROM v_books OFFSET 10",
+        "SELECT title FROM v_books FETCH FIRST 10 ROWS ONLY",
+    ],
+)
+def test_query_rejects_non_top_level_limit_forms(imported_db: Path, sql: str) -> None:
+    result = runner.invoke(app, ["query", sql, "--db", str(imported_db)])
+    assert result.exit_code == 1
+    assert "LIMIT 100 OFFSET 0" in result.output
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT count(*) AS n FROM books; SELECT asin FROM books ORDER BY asin",
+        "SELECT asin FROM books ORDER BY asin LIMIT 1; SELECT title FROM books",
+    ],
+)
+def test_query_rejects_multiple_statements(imported_db: Path, sql: str) -> None:
+    result = runner.invoke(app, ["query", sql, "--db", str(imported_db)])
+    assert result.exit_code == 1
+    assert "Only a single SQL statement" in result.output
+
+
+def test_query_rejects_compound_write_before_execution(imported_db: Path) -> None:
     before = _title(imported_db, "B000TEST01")
     result = runner.invoke(app, [
         "query",
         "SELECT 1; UPDATE books SET title='hacked' WHERE asin='B000TEST01'",
         "--db", str(imported_db),
     ])
-    assert result.exit_code != 0
+    assert result.exit_code == 1
+    assert "Only a single SQL statement" in result.output
     assert _title(imported_db, "B000TEST01") == before
 
 

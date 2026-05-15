@@ -61,11 +61,14 @@ kindb search ○○○
 ### SQL クエリ
 
 ```bash
-kindb query "SELECT title, read_status FROM v_books ORDER BY acquired_at DESC LIMIT 10"
-kindb query --table "SELECT * FROM v_author_counts LIMIT 10"
+kindb query "SELECT count(*) AS n FROM v_books"
+kindb query "SELECT asin, title, authors_text, read_status, acquired_at FROM v_books ORDER BY acquired_at DESC LIMIT 50 OFFSET 0"
+kindb query --table "SELECT author_name, book_count FROM v_author_counts ORDER BY book_count DESC, author_name ASC LIMIT 10"
 ```
 
 `SELECT` / `WITH` / `SHOW` / `DESCRIBE` / `EXPLAIN` / `PRAGMA` のみ実行できる読み取り専用接続。書き込み系 SQL は拒否される。
+
+`SELECT` / `WITH` で行を返すクエリは、トップレベル末尾の `LIMIT` が必須。全件が必要な場合も、まず `count(*)` で総数を確認し、`LIMIT/OFFSET` でページングして取得する。例外的に制限なしで実行する場合のみ `--allow-unlimited` を明示する。
 
 ### 集計
 
@@ -123,6 +126,24 @@ Claude Desktop の設定ファイルに以下を追加する:
 ```
 
 `<HOME>` は自分のホームディレクトリの絶対パスに置き換える。DB への書き込みは `kindb import` に限定する。
+
+MCP 経由では `kindb query` CLI を通らないため、CLI の `LIMIT` 必須チェックは適用されない。Claude Desktop から一覧を取得するときも、まず総数を確認してからページングする。
+
+```sql
+SELECT count(*) AS n
+FROM v_books;
+
+SELECT asin, title, authors_text, read_status, acquired_at
+FROM v_books
+ORDER BY acquired_at DESC
+LIMIT 50 OFFSET 0;
+
+SELECT asin, title, authors_text, read_status, product_image_url, acquired_at
+FROM v_books
+WHERE asin = 'B000000000';
+```
+
+`product_image_url` は出力サイズが大きいため、通常の一覧では選択せず、表紙画像が必要な詳細取得時だけ含める。`mcp-server-motherduck` の `--max-rows` / `--max-chars` は返却時の打ち切り設定であり、ページングの代替ではない。
 
 ## Claude Code からの利用（SKILL.md）
 

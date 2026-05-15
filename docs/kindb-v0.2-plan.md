@@ -44,7 +44,7 @@
   - `kindb import <kindle.json>`: 一時 DB に全件取り込み、成功後に既存 DB を置換する。
   - `kindb status`: 最終取り込み日時、蔵書数、著者数(分割後 unique)、**`read_status` 別の内訳**(`GROUP BY read_status` の結果を全件表示。`READING` 等が将来出現しても抜け落ちないように、固定 2 値ではなく動的に列挙する)、画像 URL 保有冊数を表示。
   - `kindb search <term>`: `v_books` を対象に、`title`, `authors_text`, `asin`, `read_status` を `ILIKE` で検索する。ユーザー入力の `%` / `_` / `\` はエスケープして `ILIKE ... ESCAPE '\'` で実行する。
-  - `kindb query "<SQL>" [--table]`: 読み取り専用接続で `SELECT` / `WITH` / `SHOW` / `DESCRIBE` / `EXPLAIN` / `PRAGMA` のみ実行し、JSON または表形式で出力する。
+  - `kindb query "<SQL>" [--table]`: 読み取り専用接続で `SELECT` / `WITH` / `SHOW` / `DESCRIBE` / `EXPLAIN` / `PRAGMA` のみ実行し、JSON または表形式で出力する。行返却 `SELECT` / `WITH` はトップレベル `LIMIT` を必須にし、複文は単一文チェックで拒否する。
   - `kindb authors`: 分割済み著者で冊数を多い順に表示する。
   - `kindb recent [--limit/-n N]`: `acquired_at DESC` で表紙 URL と読書状態を含む直近の本を表示する(デフォルト 20 件)。
   - `kindb delete [--yes]`: 確認つきで DB を削除する。
@@ -171,7 +171,7 @@ v0.1 の `v_books_with_reading` / `v_reading_summary` は廃止。読書セッ�
   - `search`: `title`, `authors_text`, `asin`, `read_status` で `ILIKE` 検索。`%` / `_` / `\` のエスケープが効く。
   - `authors`: 分割済み著者の冊数集計が `book_count DESC, author_name ASC` で表示される。
   - `recent`: `acquired_at DESC` で並び、`--limit/-n` が効く。表紙 URL と `read_status` を含む。
-  - `query`: 読み取り専用接続。書き込み系 SQL を拒否し、許可プレフィックス通過後も read-only 接続で複文書き込みが拒否される二重防御を確認。
+  - `query`: 許可プレフィックス、トップレベル `LIMIT` 必須チェック、単一文チェック、read-only 接続による防御を確認する。書き込み系 SQL、`LIMIT` なしの行返却 `SELECT` / `WITH`、複文書き込みが拒否されることを確認。
   - `delete`: 確認プロンプト、`--yes` でスキップ、削除後は DB 本体ファイルと `<db_path>.wal` の両方が存在しないことを確認。
   - 削除済み CLI (`genres`, `series`, `reading`) が `kindb --help` に存在しない。
 - 静的検査: `ruff check . && pytest` を通す。
