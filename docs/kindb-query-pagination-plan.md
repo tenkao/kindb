@@ -24,12 +24,20 @@
 - `product_image_url` を含む一覧は1行あたりの文字数が大きく、文字数制限に早く到達しやすい。
 - 独自 MCP サーバを作れば強制力は上がるが、今回は実装規模を抑えるため対象外とする。
 
+### MCP 経路で観測される失敗モード
+
+ドキュメント整備で誘導したい失敗は具体的には次の 2 種類。
+
+- **打ち切り無視**: `LIMIT 20` の結果だけを見て全件回答した気になる。返却サイズが `--max-rows` / `--max-chars` を超えたときの切り詰めも同様に見落とす。
+- **ページ境界での取りこぼし/重複**: タイブレーカー欠落の `ORDER BY acquired_at DESC` で `OFFSET` ページングすると、同 `acquired_at` の行がページ境界をまたいだ際に重複または欠落が発生しうる。
+
 ## Policy
 
 - 一覧取得は `LIMIT/OFFSET` でページングする。
 - 全件が必要な場合も、まず `count(*)` で総数を確認し、必要な範囲だけページ単位で取得する。
 - `product_image_url` は必要なときだけ選択する。通常の一覧では `asin`, `title`, `authors_text`, `read_status`, `acquired_at` 程度に絞る。
 - `mcp-server-motherduck` の `--max-rows` / `--max-chars` は返却時の打ち切り設定であり、ページングの代替とは扱わない。
+- **`ORDER BY` には一意キーを含めて決定的順序にする**。`v_books` の標準タイブレーカーは `asin`、`v_author_counts` は `author_name`。主ソートが `DESC` なら `, asin DESC`、`ASC` なら `, asin ASC` と方向を揃える。これが欠けると `OFFSET` ページング中に同値行がページ境界をまたいで取りこぼし/重複の原因になる。
 
 ## CLI Specification
 
@@ -94,19 +102,24 @@ kindb query "SELECT title FROM v_books FETCH FIRST 10 ROWS ONLY"
 `SKILL.md`:
 
 - 基本ルールに「一覧取得は必ず `LIMIT/OFFSET` を付ける」を追加する。
+- 基本ルールに「`ORDER BY` には一意キーを含める(`v_books` は `asin`、`v_author_counts` は `author_name`)」を追加する。
 - **ページング標準フロー**を明示する。これは AI が「`LIMIT 20` の結果だけ見て全件回答した気になる」誤動作を防ぐためのもの。
   1. `SELECT count(*)` で総数を確認する。
   2. 必要な範囲だけ `LIMIT N OFFSET M` で取得する。
   3. 全件回答が必要な場合は `OFFSET` を進めて反復取得し、取得結果が `count(*)` の総数と一致してから回答する。
-- 代表クエリを `LIMIT/OFFSET` 付きに変更する。
+- 代表クエリを `LIMIT/OFFSET` 付きに変更し、`ORDER BY` に `asin` などのタイブレーカーを反映する。
 - 表紙付き蔵書リストは全件取得ではなく、ページング前提の例にする。
 - `product_image_url` は出力サイズが大きくなりやすいため、必要時のみ選択する方針を明記する。
+- 集計クエリの代表例として、`GROUP BY` を使う年別取得冊数を追加する。
 
 `README.md`:
 
-- Claude Desktop MCP 設定セクションに、`--max-rows` / `--max-chars` とページングの違いを追記する。
+- Claude Desktop MCP 設定セクションに、`--max-rows` / `--max-chars` とページングの違いを追記する。デフォルト値(1024 行 / 50000 文字)では蔵書規模で打ち切られやすいため、推奨値(`--max-rows 1000` / `--max-chars 150000`)を含む設定例を、現状の値なし設定例と併記する。
+- **会話冒頭プロンプト**サブ節を新設し、Claude Desktop 向けに 3〜5 行の貼り付け用テンプレ(`v_books` を主に使う / `ORDER BY` に一意キー必須 / 一覧は `LIMIT/OFFSET` で、`count(*)` で先に規模確認)を置く。SKILL.md は Claude Desktop には配布されないことへの代替。
+- 同節末尾に「結果が途中で切れる場合は `LIMIT/OFFSET` でページング」「同じ本が複数回出る/抜ける場合はタイブレーカーを `ORDER BY` に追加」の脚注 2 行を吸収する(独立 Q&A 節は作らない)。
 - MCP 経由の推奨クエリとして、`count(*)`、`LIMIT/OFFSET` 付き一覧、必要時のみ詳細取得の流れを載せる。
-- 代表 SQL 例を `LIMIT/OFFSET` 付きに更新する。
+- 代表 SQL 例を `LIMIT/OFFSET` 付き・タイブレーカー付きに更新し、2 ページ目の例(`OFFSET 50`)を 1 行追加する。
+- MCP 章末尾に、詳細な失敗モード解説として本ドキュメント (`docs/kindb-query-pagination-plan.md`) への参照リンク 1 行を置く。
 
 ## Test Plan
 

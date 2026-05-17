@@ -31,6 +31,7 @@ DB ファイル: `~/.kindb/kindle.duckdb`
 ## 基本ルール
 
 - **通常は `v_books` を使う**。正規化テーブル(`books`, `book_authors`)を直接参照するのは集計やデバッグ用途に限る。
+- **`ORDER BY` には一意キーを含めて決定的順序にする**。`v_books` は `asin`、`v_author_counts` は `author_name` を標準のタイブレーカーにする。主ソートが `DESC` ならタイブレーカーも `DESC`、`ASC` なら `ASC` と方向を揃える。タイブレーカーがないと `OFFSET` ページング中に同値行がページ境界をまたいで取りこぼし/重複の原因になる。
 - 一覧取得は必ず `LIMIT/OFFSET` を付ける。全件が必要な場合も一度に取得しない。
 - 全件回答が必要な場合は、まず `SELECT count(*)` で総数を確認し、必要な範囲を `LIMIT N OFFSET M` で反復取得する。取得件数が総数と一致してから回答する。
 - `product_image_url` は出力サイズが大きくなりやすいため、表紙画像が必要なときだけ選択する。
@@ -50,7 +51,7 @@ FROM v_books;
 
 SELECT asin, title, authors_text, read_status, acquired_at
 FROM v_books
-ORDER BY acquired_at DESC
+ORDER BY acquired_at DESC, asin DESC
 LIMIT 50 OFFSET 0;
 ```
 
@@ -93,40 +94,52 @@ LIMIT 10;
 ### 最近取得した本
 
 ```sql
-SELECT title, authors, read_status, acquired_at
+SELECT asin, title, authors, read_status, acquired_at
 FROM v_books
-ORDER BY acquired_at DESC
-LIMIT 20;
+ORDER BY acquired_at DESC, asin DESC
+LIMIT 20 OFFSET 0;
 ```
 
 ### 読了マーク済みの本
 
 ```sql
-SELECT title, authors, acquired_at
+SELECT asin, title, authors, acquired_at
 FROM v_books
 WHERE read_status = 'READ'
-ORDER BY acquired_at DESC
+ORDER BY acquired_at DESC, asin DESC
 LIMIT 50 OFFSET 0;
 ```
 
 ### 読了マークが付いていない本
 
 ```sql
-SELECT title, authors, acquired_at
+SELECT asin, title, authors, acquired_at
 FROM v_books
 WHERE read_status = 'UNKNOWN'
-ORDER BY acquired_at DESC
+ORDER BY acquired_at DESC, asin DESC
 LIMIT 50 OFFSET 0;
 ```
 
 回答では「未読」ではなく「読了マークが付いていない本」と表現する。
 
+### 年別取得冊数
+
+```sql
+SELECT EXTRACT(YEAR FROM acquired_at) AS year, count(*) AS books
+FROM v_books
+GROUP BY year
+ORDER BY year
+LIMIT 100;
+```
+
+`acquired_at` はライブラリ取得日時であり、購入日とは限らない点に注意する。
+
 ### 表紙付き蔵書リスト
 
 ```sql
-SELECT title, authors, read_status, product_image_url
+SELECT asin, title, authors, read_status, product_image_url
 FROM v_books
-ORDER BY title
+ORDER BY title ASC, asin ASC
 LIMIT 20 OFFSET 0;
 ```
 

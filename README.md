@@ -62,13 +62,15 @@ kindb search ○○○
 
 ```bash
 kindb query "SELECT count(*) AS n FROM v_books"
-kindb query "SELECT asin, title, authors_text, read_status, acquired_at FROM v_books ORDER BY acquired_at DESC LIMIT 50 OFFSET 0"
+kindb query "SELECT asin, title, authors_text, read_status, acquired_at FROM v_books ORDER BY acquired_at DESC, asin DESC LIMIT 50 OFFSET 0"
 kindb query --table "SELECT author_name, book_count FROM v_author_counts ORDER BY book_count DESC, author_name ASC LIMIT 10"
 ```
 
 `SELECT` / `WITH` / `SHOW` / `DESCRIBE` / `EXPLAIN` / `PRAGMA` のみ実行できる読み取り専用接続。書き込み系 SQL は拒否される。
 
 `SELECT` / `WITH` で行を返すクエリは、トップレベル末尾の `LIMIT` が必須。全件が必要な場合も、まず `count(*)` で総数を確認し、`LIMIT/OFFSET` でページングして取得する。例外的に制限なしで実行する場合のみ `--allow-unlimited` を明示する。
+
+`ORDER BY` には一意なタイブレーカー(`v_books` は `asin`、`v_author_counts` は `author_name`)を必ず含める。主ソートに `DESC` を使うときはタイブレーカーも `DESC` で揃える。タイブレーカーがないと、同 `acquired_at` の行がページ境界をまたいだ際に `OFFSET` ページングで取りこぼし/重複が起こりうる。
 
 ### 集計
 
@@ -127,6 +129,45 @@ Claude Desktop の設定ファイルに以下を追加する:
 
 `<HOME>` は自分のホームディレクトリの絶対パスに置き換える。DB への書き込みは `kindb import` に限定する。
 
+`mcp-server-motherduck` のデフォルト返却上限(1024 行 / 50000 文字)では Kindle 蔵書規模のリスト取得が頻繁に打ち切られる。蔵書ビューア用途では `--max-rows` / `--max-chars` を以下の推奨値まで引き上げた設定を使うとよい:
+
+```json
+{
+  "mcpServers": {
+    "kindb": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-motherduck",
+        "--db-path",
+        "<HOME>/.kindb/kindle.duckdb",
+        "--max-rows",
+        "1000",
+        "--max-chars",
+        "150000"
+      ]
+    }
+  }
+}
+```
+
+上げすぎは LLM のコンテキストを圧迫するため、ユースケースに応じて調整する。なお `--max-rows` / `--max-chars` はあくまで返却時の打ち切り設定であり、ページングの代替ではない。
+
+### 会話冒頭プロンプト
+
+`SKILL.md` は Claude Code 向けに配布されるが、Claude Desktop には自動で届かないため、Claude Desktop から kindb を使う会話の冒頭に以下を貼り付けると LLM の挙動が安定する:
+
+```
+kindb (Kindle 蔵書 DB) を使う。
+- 通常は v_books を主に使う(集計は v_author_counts)。
+- ORDER BY には一意なタイブレーカー(v_books は asin、v_author_counts は author_name)を必ず含める。主ソートが DESC ならタイブレーカーも DESC で揃える。
+- 一覧取得は LIMIT/OFFSET でページングする。先に count(*) で総数を確認し、LIMIT N OFFSET M で反復取得する。--max-rows / --max-chars はページングの代替ではない。
+- product_image_url は出力サイズが大きいため、通常の一覧では選択せず、表紙画像が必要な詳細取得時だけ含める。
+```
+
+> 補足: 結果が途中で切れる場合は `LIMIT/OFFSET` で次のページを取得する。同じ本が複数回出る/抜ける場合は `ORDER BY` にタイブレーカー(`asin` 等)を必ず追加する。
+
+### MCP 経由の代表クエリ
+
 MCP 経由では `kindb query` CLI を通らないため、CLI の `LIMIT` 必須チェックは適用されない。Claude Desktop から一覧を取得するときも、まず総数を確認してからページングする。
 
 ```sql
@@ -135,15 +176,22 @@ FROM v_books;
 
 SELECT asin, title, authors_text, read_status, acquired_at
 FROM v_books
-ORDER BY acquired_at DESC
+ORDER BY acquired_at DESC, asin DESC
 LIMIT 50 OFFSET 0;
+
+SELECT asin, title, authors_text, read_status, acquired_at
+FROM v_books
+ORDER BY acquired_at DESC, asin DESC
+LIMIT 50 OFFSET 50;
 
 SELECT asin, title, authors_text, read_status, product_image_url, acquired_at
 FROM v_books
 WHERE asin = 'B000000000';
 ```
 
-`product_image_url` は出力サイズが大きいため、通常の一覧では選択せず、表紙画像が必要な詳細取得時だけ含める。`mcp-server-motherduck` の `--max-rows` / `--max-chars` は返却時の打ち切り設定であり、ページングの代替ではない。
+`product_image_url` は出力サイズが大きいため、通常の一覧では選択せず、表紙画像が必要な詳細取得時だけ含める。
+
+MCP 経由で観測される具体的な失敗モード(打ち切り無視、ページ境界での取りこぼし/重複)とドキュメント整備方針は [`docs/kindb-query-pagination-plan.md`](docs/kindb-query-pagination-plan.md) を参照。
 
 ## Claude Code からの利用（SKILL.md）
 
