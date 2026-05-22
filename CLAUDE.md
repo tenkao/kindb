@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 kindb は Chrome 拡張などで取得した `kindle.json` を DuckDB に取り込み、Claude Desktop(MCP 経由) や Claude Code / CLI から Kindle 蔵書を検索・集計するローカルツール。Python パッケージとして実装。
 
-設計・スキーマ・スコープの詳細は @docs/kindb-v0.2-plan.md を参照。
+設計・スキーマ・スコープの詳細は @docs/kindb-v0.2-plan.md と @docs/kindb-v0.3-plan.md を参照。
 使い方・主要ビュー・MCP 設定は @README.md を参照。
 生成 AI 向けクエリガイドは @SKILL.md を参照。
 

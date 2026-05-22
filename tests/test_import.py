@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from kindb.db import connect
+from kindb.db import connect, ensure_schema
 from kindb.importer import MAX_ACQUIRED_TIME_MS, _acquired_time_to_datetime, import_kindle_json
 from tests.create_fixture import create_kindle_json
 
@@ -71,25 +72,17 @@ def test_import_failure_preserves_existing(kindle_json: Path, db_path: Path, tmp
     assert _asins(db_path) == before
 
 
-def test_tmp_dir_placed_in_db_parent(
+def test_import_does_not_replace_db_file(
     kindle_json: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import tempfile as _tempfile
+    def _fail_replace(*args: object, **kwargs: object) -> None:
+        raise AssertionError("os.replace should not be used by v0.3 import")
 
-    db_dir = tmp_path / "db_root"
-    db_path = db_dir / "store.duckdb"
-    captured: dict[str, str | None] = {"dir": None}
-    original = _tempfile.mkdtemp
-
-    def _spy(*, dir: str | None = None, **kwargs: object) -> str:
-        captured["dir"] = dir
-        return original(dir=dir, **kwargs)
-
-    monkeypatch.setattr(_tempfile, "mkdtemp", _spy)
+    monkeypatch.setattr(os, "replace", _fail_replace)
+    db_path = tmp_path / "db_root" / "store.duckdb"
     import_kindle_json(kindle_json, db_path)
 
-    assert captured["dir"] is not None
-    assert Path(captured["dir"]) == db_dir
+    assert db_path.exists()
 
 
 def test_failed_import_cleans_up_tmp_dir(tmp_path: Path) -> None:
@@ -215,7 +208,24 @@ def test_schema_tables_and_views(imported_db: Path) -> None:
     con = connect(imported_db, read_only=True)
     try:
         tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
-        assert tables == {"book_authors", "books", "import_metadata", "v_author_counts", "v_books"}
+        assert tables == {
+            "book_author_ids",
+            "book_author_names",
+            "book_authors",
+            "book_genres",
+            "book_series",
+            "books",
+            "import_metadata",
+            "import_metadata_official",
+            "v_author_counts",
+            "v_author_id_counts",
+            "v_book_authors_official",
+            "v_book_genres",
+            "v_book_series",
+            "v_books",
+            "v_genre_counts",
+            "v_series_counts",
+        }
     finally:
         con.close()
 
@@ -237,6 +247,68 @@ def test_columns(imported_db: Path) -> None:
         assert author_cols == ["asin", "author_name", "author_order"]
     finally:
         con.close()
+
+
+def test_ensure_schema_migrates_v02_database(tmp_path: Path) -> None:
+    db = tmp_path / "v02.duckdb"
+    con = connect(db)
+    try:
+        con.execute(
+            """CREATE TABLE books (
+                asin VARCHAR PRIMARY KEY,
+                title VARCHAR NOT NULL,
+                authors_text VARCHAR NOT NULL,
+                acquired_at TIMESTAMP NOT NULL,
+                read_status VARCHAR NOT NULL,
+                product_image_url VARCHAR,
+                imported_at TIMESTAMP NOT NULL
+            )"""
+        )
+        con.execute(
+            """CREATE TABLE book_authors (
+                asin VARCHAR NOT NULL,
+                author_name VARCHAR NOT NULL,
+                author_order INTEGER NOT NULL,
+                PRIMARY KEY (asin, author_order)
+            )"""
+        )
+        con.execute(
+            """CREATE TABLE import_metadata (
+                source_path VARCHAR,
+                source_type VARCHAR,
+                books_count INTEGER,
+                imported_at TIMESTAMP
+            )"""
+        )
+    finally:
+        con.close()
+
+    ensure_schema(db)
+
+    con = connect(db, read_only=True)
+    try:
+        tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+        assert "book_genres" in tables
+        assert "v_author_id_counts" in tables
+        row = con.execute(
+            """SELECT genres, series_title, author_ids, author_names_official
+               FROM v_books
+               LIMIT 0"""
+        )
+        assert [desc[0] for desc in row.description] == [
+            "genres",
+            "series_title",
+            "author_ids",
+            "author_names_official",
+        ]
+    finally:
+        con.close()
+
+
+def test_ensure_schema_missing_database_is_noop(tmp_path: Path) -> None:
+    db = tmp_path / "missing.duckdb"
+    ensure_schema(db)
+    assert not db.exists()
 
 
 def test_authors_split_and_order(imported_db: Path) -> None:

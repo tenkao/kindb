@@ -1,11 +1,11 @@
 # kindb 手動テストシナリオ
 
-kindb v0.2 を実際のターミナルで目視確認するためのシナリオ。入力は `kindle.json` のみ。
+kindb v0.3 を実際のターミナルで目視確認するためのシナリオ。主入力は `kindle.json`。任意で公式 `Kindle.zip` を追加取り込みし、ジャンル・シリーズ・Amazon 著者 ID を補完する。
 
 ## 0. 準備
 
 ```bash
-cd /Users/tenkao/Documents/Projects/codex/kindb
+cd /Users/tenkao/.codex/worktrees/c2ff/kindb
 python3 -m venv venv
 source venv/bin/activate
 pip install -e ".[dev]"
@@ -14,26 +14,32 @@ export TEST_DB=/tmp/kindb_manual/test.duckdb
 rm -rf /tmp/kindb_manual && mkdir -p /tmp/kindb_manual
 
 python -m tests.create_fixture
+python - <<'PY'
+from pathlib import Path
+from tests.create_official_fixture import create_official_zip
+create_official_zip(Path("/tmp/kindb_manual/Kindle.zip"))
+PY
 ls tests/fixtures/kindle.json
+ls /tmp/kindb_manual/Kindle.zip
 
 ruff check . && pytest -q
 ```
 
 期待:
-- `kindb --help` に `import`, `status`, `search`, `query`, `authors`, `recent`, `delete` が表示される。
+- `kindb --help` に `import`, `import-official`, `status`, `search`, `query`, `authors`, `recent`, `delete` が表示される。
 - `genres`, `series`, `reading` は表示されない。
 
 ## 1. import
 
 ```bash
 kindb import tests/fixtures/kindle.json --db "$TEST_DB"
-find /tmp/kindb_manual -maxdepth 1 -type d -name 'tmp*' -print
+ls -la "$TEST_DB"*
 ```
 
 期待:
 - `Import complete: 5 books`
 - `$TEST_DB` が作成される。
-- `/tmp/kindb_manual/` に一時ディレクトリが残らない。
+- `$TEST_DB.wal` は残らない。
 
 再 import:
 
@@ -126,6 +132,99 @@ kindb import /tmp/kindb_manual/unknown.json --db /tmp/kindb_manual/unknown.duckd
 
 期待: stderr に `Warning:` が出るが import は成功する。
 
+## 1.5 official zip import
+
+```bash
+kindb import tests/fixtures/kindle.json --db "$TEST_DB"
+kindb import-official /tmp/kindb_manual/Kindle.zip --db "$TEST_DB"
+kindb status --db "$TEST_DB"
+```
+
+期待:
+- `Official import complete`
+- `Genres: 4`
+- `Series: 2`
+- `Author IDs: 3`
+- `Author names: 4`
+- `Official ASIN: 4`
+- `status` に `Official import`, `Official source`, `Genres (rows)`, `Series (rows)`, `Author IDs (rows)`, `Author names (rows)`, `Official ASIN (uniq)` が表示される。
+
+zip だけを先に取り込めること:
+
+```bash
+kindb delete --yes --db /tmp/kindb_manual/official_only.duckdb 2>/dev/null || true
+kindb import-official /tmp/kindb_manual/Kindle.zip --db /tmp/kindb_manual/official_only.duckdb
+kindb query "SELECT count(*) AS n FROM book_genres" --db /tmp/kindb_manual/official_only.duckdb
+kindb query "SELECT count(*) AS n FROM v_book_genres" --db /tmp/kindb_manual/official_only.duckdb
+```
+
+期待:
+- `book_genres` は 4 行。
+- `books` が空なので `v_book_genres` は 0 行。
+
+必須ファイル欠落:
+
+```bash
+python - <<'PY'
+from pathlib import Path
+import zipfile
+
+src = Path("/tmp/kindb_manual/Kindle.zip")
+dst = Path("/tmp/kindb_manual/Kindle_missing_author_names.zip")
+with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w") as zout:
+    for name in zin.namelist():
+        if "CustomerAuthorNameRelationship_FE" not in name:
+            zout.writestr(name, zin.read(name))
+PY
+kindb import-official /tmp/kindb_manual/Kindle_missing_author_names.zip --db "$TEST_DB"; echo "exit=$?"
+```
+
+期待:
+- `exit=1`
+- エラーメッセージに `CustomerAuthorNameRelationship_FE` が含まれる。
+- 既存の official import データは残る。
+
+ヘッダ不一致:
+
+```bash
+python - <<'PY'
+from pathlib import Path
+import zipfile
+
+src = Path("/tmp/kindb_manual/Kindle.zip")
+dst = Path("/tmp/kindb_manual/Kindle_bad_header.zip")
+with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w") as zout:
+    for name in zin.namelist():
+        if "CustomerGenres_FE" in name:
+            zout.writestr(name, "ASIN,Bad\nB000TEST01,Fiction\n")
+        else:
+            zout.writestr(name, zin.read(name))
+PY
+kindb import-official /tmp/kindb_manual/Kindle_bad_header.zip --db "$TEST_DB"; echo "exit=$?"
+kindb query "SELECT count(*) AS n FROM book_genres" --db "$TEST_DB"
+```
+
+期待:
+- `exit=1`
+- エラーメッセージに `Genre` が含まれる。
+- `book_genres` は壊れず 4 行のまま。
+
+import の独立性:
+
+```bash
+kindb query "SELECT count(*) AS n FROM book_genres" --db "$TEST_DB"
+kindb import tests/fixtures/kindle.json --db "$TEST_DB"
+kindb query "SELECT count(*) AS n FROM book_genres" --db "$TEST_DB"
+
+kindb query "SELECT count(*) AS n FROM books" --db "$TEST_DB"
+kindb import-official /tmp/kindb_manual/Kindle.zip --db "$TEST_DB"
+kindb query "SELECT count(*) AS n FROM books" --db "$TEST_DB"
+```
+
+期待:
+- `kindle.json` 再 import 後も `book_genres` は 4 行。
+- `import-official` 後も `books` は 5 行。
+
 ## 2. status
 
 ```bash
@@ -138,6 +237,7 @@ kindb status --db "$TEST_DB"
 - `Read status: READ`, `Read status: READING`, `Read status: UNKNOWN`
 - With image URL
 - Source は `kindle.json` の絶対パス
+- official zip 取り込み済みなら `Official import` 以降の行が表示される。
 
 ## 3. search
 
@@ -152,6 +252,7 @@ kindb search ZZZZZ --db "$TEST_DB"
 期待:
 - title / authors_text / asin / read_status で検索できる。
 - ヒットなしは `No results found.` で終了コード 0。
+- 表示順は `title ASC, asin ASC` で安定している。
 
 ワイルドカードエスケープ:
 
@@ -198,7 +299,7 @@ kindb recent -n 1 --db "$TEST_DB"
 ```
 
 期待:
-- `acquired_at DESC`。
+- `acquired_at DESC, asin DESC`。
 - 表紙 URL と `read_status` が表示される。
 - `-n 1` では 1 冊だけ表示される。
 
@@ -236,9 +337,15 @@ ls -la "$TEST_DB"*
 
 ```bash
 kindb import tests/fixtures/kindle.json --db "$TEST_DB"
+kindb import-official /tmp/kindb_manual/Kindle.zip --db "$TEST_DB"
 kindb query --table "SHOW TABLES" --db "$TEST_DB"
+kindb query --table "DESCRIBE v_books" --db "$TEST_DB"
 kindb query --table "SELECT * FROM v_books ORDER BY asin LIMIT 20 OFFSET 0" --db "$TEST_DB"
 kindb query --table "SELECT * FROM v_author_counts ORDER BY book_count DESC, author_name ASC LIMIT 20 OFFSET 0" --db "$TEST_DB"
+kindb query --table "SELECT * FROM v_genre_counts ORDER BY book_count DESC, genre ASC LIMIT 20 OFFSET 0" --db "$TEST_DB"
+kindb query --table "SELECT * FROM v_series_counts ORDER BY book_count DESC, series_title ASC LIMIT 20 OFFSET 0" --db "$TEST_DB"
+kindb query --table "SELECT * FROM v_author_id_counts ORDER BY book_count DESC, author_name ASC, author_id ASC LIMIT 20 OFFSET 0" --db "$TEST_DB"
+kindb query --table "SELECT * FROM v_book_authors_official ORDER BY asin ASC, author_order ASC LIMIT 20 OFFSET 0" --db "$TEST_DB"
 kindb query --table "
   SELECT b.asin, b.authors AS v_books_authors,
          list(ba.author_name ORDER BY ba.author_order) AS expected_authors,
@@ -253,12 +360,110 @@ kindb query --table "
 ```
 
 期待:
-- `SHOW TABLES`: テーブル/ビューは `books`, `book_authors`, `import_metadata`, `v_books`, `v_author_counts` のみ。
-- `SELECT * FROM v_books`: 1 ASIN 1 行で並び、`authors` 配列・`authors_text`・`product_image_url`・`read_status`・`acquired_at` が表示される。
+- `SHOW TABLES`: `books`, `book_authors`, `import_metadata` に加え、`book_genres`, `book_series`, `book_author_ids`, `book_author_names`, `import_metadata_official` と v0.3 の view 群が表示される。
+- `DESCRIBE v_books`: `genres`, `series_title`, `series_asin`, `series_position`, `author_ids`, `author_names_official` が表示される。
+- `SELECT * FROM v_books`: 1 ASIN 1 行で並び、`authors` 配列・`authors_text`・`product_image_url`・`read_status`・`acquired_at` に加え、`genres`, `series_title`, `series_asin`, `series_position`, `author_ids`, `author_names_official` が表示される。
 - `SELECT * FROM v_author_counts`: `book_count DESC, author_name ASC` で並ぶ。
+- `SELECT * FROM v_genre_counts`: `Fiction` が 2 冊、`Fantasy` が 1 冊で表示される。
+- `SELECT * FROM v_series_counts`: `Series Alpha` と `Series Without Asin` が表示される。
+- `SELECT * FROM v_author_id_counts`: `Same Name` が別 `author_id` で別行として表示される。
+- `SELECT * FROM v_book_authors_official`: `B000TEST04` の `Name Only` 行は `author_id` が NULL。
 - 著者順検証クエリ: 全行で `v_books_authors = expected_authors`、かつ `authors_text` を `, ` で分割した順と一致する。
 
-## 9. 後片付け
+zip 未取り込み時の `v_books`:
+
+```bash
+kindb import tests/fixtures/kindle.json --db /tmp/kindb_manual/no_official.duckdb
+kindb query --table "
+  SELECT asin, genres, series_title, series_asin, series_position, author_ids, author_names_official
+  FROM v_books
+  ORDER BY asin
+  LIMIT 20 OFFSET 0
+" --db /tmp/kindb_manual/no_official.duckdb
+```
+
+期待:
+- `genres`, `author_ids`, `author_names_official` は空配列 `[]`。
+- `series_title`, `series_asin`, `series_position` は NULL。
+
+sentinel / 除外確認:
+
+```bash
+kindb query --table "
+  SELECT asin, series_title, series_asin, series_position
+  FROM v_books
+  WHERE asin IN ('B000TEST01', 'B000TEST02')
+  ORDER BY asin
+  LIMIT 20 OFFSET 0
+" --db "$TEST_DB"
+
+kindb query "SELECT count(*) AS n FROM book_genres WHERE asin = 'B000DEL001'" --db "$TEST_DB"
+kindb query "SELECT count(*) AS n FROM book_genres WHERE asin = 'Not Available'" --db "$TEST_DB"
+kindb query "SELECT count(*) AS n FROM v_book_genres WHERE asin = 'B000ZIP001'" --db "$TEST_DB"
+```
+
+期待:
+- `B000TEST01`: `series_title = Series Alpha`, `series_asin = B07D4FP6XQ`, `series_position = 1`
+- `B000TEST02`: `series_title = Series Without Asin`, `series_asin = NULL`, `series_position = NULL`
+- `Deleted By Customer = Yes` の `B000DEL001` は 0 行。
+- `ASIN = Not Available` は 0 行。
+- zip にしかない `B000ZIP001` は raw table には残るが、`v_book_genres` では 0 行。
+
+## 9. v0.2 DB マイグレーション
+
+新テーブル/view が無い DB を作って、読み取り CLI が自動で schema を更新することを確認する。
+
+```bash
+python - <<'PY'
+from pathlib import Path
+from kindb.db import connect
+
+db = Path("/tmp/kindb_manual/v02.duckdb")
+db.unlink(missing_ok=True)
+con = connect(db)
+try:
+    con.execute("""
+        CREATE TABLE books (
+            asin VARCHAR PRIMARY KEY,
+            title VARCHAR NOT NULL,
+            authors_text VARCHAR NOT NULL,
+            acquired_at TIMESTAMP NOT NULL,
+            read_status VARCHAR NOT NULL,
+            product_image_url VARCHAR,
+            imported_at TIMESTAMP NOT NULL
+        )
+    """)
+    con.execute("""
+        CREATE TABLE book_authors (
+            asin VARCHAR NOT NULL,
+            author_name VARCHAR NOT NULL,
+            author_order INTEGER NOT NULL,
+            PRIMARY KEY (asin, author_order)
+        )
+    """)
+    con.execute("""
+        CREATE TABLE import_metadata (
+            source_path VARCHAR,
+            source_type VARCHAR,
+            books_count INTEGER,
+            imported_at TIMESTAMP
+        )
+    """)
+finally:
+    con.close()
+PY
+
+kindb status --db /tmp/kindb_manual/v02.duckdb
+kindb query --table "SHOW TABLES" --db /tmp/kindb_manual/v02.duckdb
+kindb query --table "DESCRIBE v_books" --db /tmp/kindb_manual/v02.duckdb
+```
+
+期待:
+- `status` がエラーにならない。
+- `SHOW TABLES` に v0.3 の新テーブル/view が追加される。
+- `DESCRIBE v_books` に `genres`, `series_title`, `series_asin`, `series_position`, `author_ids`, `author_names_official` が含まれる。
+
+## 10. 後片付け
 
 ```bash
 rm -rf /tmp/kindb_manual

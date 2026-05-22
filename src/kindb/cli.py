@@ -11,8 +11,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from kindb.db import connect, get_db_path, wal_path
-from kindb.importer import import_kindle_json
+from kindb.db import connect, ensure_schema, get_db_path, wal_path
+from kindb.importer import import_kindle_json, import_official_zip
 
 app = typer.Typer(help="Kindle library manager powered by DuckDB.")
 console = Console()
@@ -32,6 +32,7 @@ def _require_db(db: str | None) -> Path:
     if not db_path.exists():
         err_console.print("[yellow]No database found.[/yellow] Run 'kindb import' first.")
         raise typer.Exit(1)
+    ensure_schema(db_path)
     return db_path
 
 
@@ -55,6 +56,27 @@ def import_cmd(
         raise typer.Exit(1)
 
 
+@app.command("import-official")
+def import_official_cmd(
+    zip_path: str = typer.Argument(..., help="Path to official Kindle.zip"),
+    db: Optional[str] = _db_option(),
+) -> None:
+    """Import optional official Kindle.zip metadata."""
+    db_path = get_db_path(db)
+    try:
+        result = import_official_zip(zip_path, db_path)
+        console.print("[green]Official import complete[/green]")
+        console.print(f"Genres: {result['genres_count']}")
+        console.print(f"Series: {result['series_count']}")
+        console.print(f"Author IDs: {result['author_ids_count']}")
+        console.print(f"Author names: {result['author_names_count']}")
+        console.print(f"Official ASIN: {result['distinct_asin_count']}")
+        console.print(f"Database: {result['db_path']}")
+    except (FileNotFoundError, ValueError) as e:
+        err_console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
 @app.command()
 def status(db: Optional[str] = _db_option()) -> None:
     """Show database status."""
@@ -71,6 +93,12 @@ def status(db: Optional[str] = _db_option()) -> None:
         statuses = con.execute(
             "SELECT read_status, count(*) FROM books GROUP BY read_status ORDER BY read_status"
         ).fetchall()
+        official_meta = con.execute(
+            """SELECT source_path, source_type, genres_count, series_count, author_ids_count,
+                      author_names_count, distinct_asin_count, imported_at
+               FROM import_metadata_official
+               LIMIT 1"""
+        ).fetchone()
 
         table = Table(title="kindb status")
         table.add_column("Item", style="bold")
@@ -84,6 +112,14 @@ def status(db: Optional[str] = _db_option()) -> None:
         for read_status, count in statuses:
             table.add_row(f"Read status: {read_status}", str(count))
         table.add_row("With image URL", str(images))
+        if official_meta:
+            table.add_row("Official import", str(official_meta[7]))
+            table.add_row("Official source", official_meta[0])
+            table.add_row("Genres (rows)", str(official_meta[2]))
+            table.add_row("Series (rows)", str(official_meta[3]))
+            table.add_row("Author IDs (rows)", str(official_meta[4]))
+            table.add_row("Author names (rows)", str(official_meta[5]))
+            table.add_row("Official ASIN (uniq)", str(official_meta[6]))
         table.add_row("Database", str(db_path))
         console.print(table)
     finally:
@@ -108,7 +144,7 @@ def search(
                   OR authors_text ILIKE ? ESCAPE '\'
                   OR asin ILIKE ? ESCAPE '\'
                   OR read_status ILIKE ? ESCAPE '\'
-               ORDER BY title""",
+               ORDER BY title ASC, asin ASC""",
             [like, like, like, like],
         ).fetchall()
 
@@ -373,7 +409,7 @@ def recent(
         db,
         """SELECT asin, title, authors, read_status, product_image_url, acquired_at
            FROM v_books
-           ORDER BY acquired_at DESC
+           ORDER BY acquired_at DESC, asin DESC
            LIMIT ?""",
         title="Recent Books",
         columns=[

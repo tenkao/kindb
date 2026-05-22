@@ -1,6 +1,6 @@
 # kindb
 
-Chrome 拡張「[Kindle bookshelf exporter](https://chromewebstore.google.com/detail/kindle-bookshelf-exporter/olimpmeljimffgjonlpmiaebaonnegdp)」で取得した Kindle 蔵書データ `kindle.json` を DuckDB に取り込み、Claude Desktop や Claude Code / CLI から検索・集計・分析するツール。
+Chrome 拡張「[Kindle bookshelf exporter](https://chromewebstore.google.com/detail/kindle-bookshelf-exporter/olimpmeljimffgjonlpmiaebaonnegdp)」で取得した Kindle 蔵書データ `kindle.json` を DuckDB に取り込み、Claude Desktop や Claude Code / CLI から検索・集計・分析するツール。Amazon 公式の `Kindle.zip` を任意で追加取り込みし、ジャンル・シリーズ・Amazon 著者 ID を補完できる。
 
 - ローカル完結（外部 API への通信なし）
 - DuckDB の列指向エンジンで高速クエリ
@@ -9,7 +9,7 @@ Chrome 拡張「[Kindle bookshelf exporter](https://chromewebstore.google.com/de
 
 ## 使用データ
 
-入力は `kindle.json` のみ。ルート配列の各要素が 1 冊に対応し、以下のキーを想定する。
+主入力は `kindle.json`。ルート配列の各要素が 1 冊に対応し、以下のキーを想定する。
 
 - `title`
 - `authors`
@@ -19,6 +19,8 @@ Chrome 拡張「[Kindle bookshelf exporter](https://chromewebstore.google.com/de
 - `productImage`（任意）
 
 上記フォーマットに合う JSON を `kindb import` に渡す。
+
+任意で Amazon 公式のアカウントサービスから取得した `Kindle.zip` を `kindb import-official` に渡すと、`kindle.json` では取得できないジャンル、シリーズ、Amazon 著者 ID、公式著者名を別テーブルに取り込む。
 
 ## インストール
 
@@ -38,7 +40,15 @@ pip install -e ".[dev]"
 kindb import path/to/kindle.json
 ```
 
-一時 DB に全件取り込み、成功後に既存 DB を置換する。初回・更新とも同じコマンド。差分更新ではなく最新 JSON を毎回フルインポートする。失敗時は既存 DB が残る。
+DB 内の単一トランザクションで全件置換する。初回・更新とも同じコマンド。差分更新ではなく最新 JSON を毎回フルインポートする。失敗時は既存データが残る。
+
+公式 `Kindle.zip` の追加取り込み:
+
+```bash
+kindb import-official path/to/Kindle.zip
+```
+
+zip 由来データは `book_genres` / `book_series` / `book_author_ids` / `book_author_names` に保存され、`kindle.json` の再 import では消えない。逆に `import-official` は `books` / `book_authors` には触れない。
 
 デフォルト DB パスは `~/.kindb/kindle.duckdb`。`--db PATH` で上書き可能。
 
@@ -48,7 +58,7 @@ kindb import path/to/kindle.json
 kindb status
 ```
 
-最終インポート日時、蔵書数、著者数、`read_status` 別内訳、画像 URL 保有冊数を表示する。
+最終インポート日時、蔵書数、著者数、`read_status` 別内訳、画像 URL 保有冊数を表示する。公式 zip 取り込み済みの場合は、公式 import 日時、source path、ジャンル/シリーズ/著者 ID/著者名の行数も表示する。
 
 ### 検索
 
@@ -89,10 +99,18 @@ kindb delete --yes    # 確認スキップ
 
 ## 主要ビュー
 
-通常は以下のビューを使う。テーブル定義の詳細は [`SKILL.md`](SKILL.md) と [`docs/kindb-v0.2-plan.md`](docs/kindb-v0.2-plan.md) を参照。
+通常は以下のビューを使う。テーブル定義の詳細は [`SKILL.md`](SKILL.md)、[`docs/kindb-v0.2-plan.md`](docs/kindb-v0.2-plan.md)、[`docs/kindb-v0.3-plan.md`](docs/kindb-v0.3-plan.md) を参照。
 
-- `v_books`: 1 冊 1 行の主ビュー。分割済み著者配列、元の著者文字列、読書状態、表紙 URL、取得日時を含む。
+- `v_books`: 1 冊 1 行の主ビュー。分割済み著者配列、元の著者文字列、読書状態、表紙 URL、取得日時に加え、公式 zip 取り込み済みなら `genres`, `series_title`, `series_asin`, `series_position`, `author_ids`, `author_names_official` を含む。
 - `v_author_counts`: 著者別冊数。`book_count DESC, author_name ASC` で決定的に並ぶ。
+- `v_book_genres`: 本とジャンルの 1:N 展開。
+- `v_book_series`: シリーズ内の蔵書一覧。
+- `v_series_counts`: シリーズ別の所有冊数。
+- `v_genre_counts`: ジャンル別の所有冊数。
+- `v_author_id_counts`: Amazon 著者 ID ベースの著者別冊数。同名・別 ID の区別に使う。
+- `v_book_authors_official`: ASIN ごとの公式著者 ID と公式著者名の対応。
+
+`v_author_counts` は `kindle.json` の著者名ベースで、zip 取り込みなしで使える。`v_author_id_counts` は zip 由来の Amazon 著者 ID ベースで、同名・別 ID を区別したい場合に使う。
 
 ## 扱わない項目
 
@@ -101,6 +119,8 @@ kindb delete --yes    # 確認スキップ
 - 発売日、出版社、購入価格
 - Kindle Unlimited 判定、購入経路
 - マンガ / 固定レイアウト判定
+
+公式 zip には価格などの列が含まれることがあるが、v0.3 では取り込まない。
 
 `read_status = 'READ'` はユーザーが Kindle 上で付けた読了マークの自己申告フラグ。`UNKNOWN` は「読了マークなし」であり、未読とは断定しない。
 
@@ -162,6 +182,7 @@ kindb (Kindle 蔵書 DB) を使う。
 - ORDER BY には一意なタイブレーカー(v_books は asin、v_author_counts は author_name)を必ず含める。主ソートが DESC ならタイブレーカーも DESC で揃える。
 - 一覧取得は LIMIT/OFFSET でページングする。先に count(*) で総数を確認し、LIMIT N OFFSET M で反復取得する。--max-rows / --max-chars はページングの代替ではない。
 - product_image_url は出力サイズが大きいため、通常の一覧では選択せず、表紙画像が必要な詳細取得時だけ含める。
+- 公式 zip 取り込み済みなら v_genre_counts / v_series_counts / v_author_id_counts も使える。未取り込みかどうかは kindb status の Official import 行で確認する。
 ```
 
 > 補足: 結果が途中で切れる場合は `LIMIT/OFFSET` で次のページを取得する。同じ本が複数回出る/抜ける場合は `ORDER BY` にタイブレーカー(`asin` 等)を必ず追加する。
@@ -187,6 +208,16 @@ LIMIT 50 OFFSET 50;
 SELECT asin, title, authors_text, read_status, product_image_url, acquired_at
 FROM v_books
 WHERE asin = 'B000000000';
+
+SELECT genre, book_count
+FROM v_genre_counts
+ORDER BY book_count DESC, genre ASC
+LIMIT 10;
+
+SELECT series_title, book_count
+FROM v_series_counts
+ORDER BY book_count DESC, series_title ASC
+LIMIT 10;
 ```
 
 `product_image_url` は出力サイズが大きいため、通常の一覧では選択せず、表紙画像が必要な詳細取得時だけ含める。
@@ -212,7 +243,8 @@ ruff check . && pytest
 
 ## 関連ドキュメント
 
-- [`docs/kindb-v0.2-plan.md`](docs/kindb-v0.2-plan.md): 実装計画、スキーマ・スコープの公式記述
+- [`docs/kindb-v0.2-plan.md`](docs/kindb-v0.2-plan.md): v0.2 実装計画、スキーマ・スコープの公式記述
+- [`docs/kindb-v0.3-plan.md`](docs/kindb-v0.3-plan.md): 公式 Kindle.zip オプション取り込みの実装計画
 - [`SKILL.md`](SKILL.md): 生成 AI 向けクエリガイド（代表クエリ集含む）
 
 ## ライセンス
