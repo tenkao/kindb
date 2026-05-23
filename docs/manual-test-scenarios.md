@@ -5,7 +5,7 @@ kindb v0.3 を実際のターミナルで目視確認するためのシナリオ
 ## 0. 準備
 
 ```bash
-cd /Users/tenkao/.codex/worktrees/c2ff/kindb
+cd /path/to/kindb
 python3 -m venv venv
 source venv/bin/activate
 pip install -e ".[dev]"
