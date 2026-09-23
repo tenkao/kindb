@@ -130,6 +130,54 @@ def test_search_no_results(imported_db: Path) -> None:
     assert "No results" in result.output
 
 
+def test_search_limit_shows_total(imported_db: Path) -> None:
+    result = runner.invoke(app, ["search", "B000TEST", "-n", "2", "--db", str(imported_db)])
+    assert result.exit_code == 0
+    assert "B000TEST04" in result.output
+    assert "B000TEST02" in result.output
+    assert "B000TEST05" not in result.output
+    assert "Showing 2 of 5 results" in result.output
+    assert "-n 0" in result.output
+
+
+def test_search_default_limit_and_all(tmp_path: Path) -> None:
+    rows = [
+        {
+            "title": f"Book {i:02d}",
+            "authors": "Author",
+            "acquiredTime": 1704067200000,
+            "readStatus": "UNKNOWN",
+            "asin": f"B000MANY{i:02d}",
+        }
+        for i in range(60)
+    ]
+    db = tmp_path / "many.duckdb"
+    import_kindle_json(create_kindle_json(tmp_path / "many.json", rows), db)
+
+    default = runner.invoke(app, ["search", "Book", "--db", str(db)])
+    assert default.exit_code == 0
+    assert "Showing 50 of 60 results" in default.output
+    assert "B000MANY49" in default.output
+    assert "B000MANY50" not in default.output
+
+    everything = runner.invoke(app, ["search", "Book", "-n", "0", "--db", str(db)])
+    assert everything.exit_code == 0
+    assert "Showing 60 of 60 results" in everything.output
+    assert "B000MANY59" in everything.output
+
+
+def test_search_omits_image_url(imported_db: Path) -> None:
+    # 表紙 URL は 1 行を長くするため、一覧には出さない(必要なら kindb query で選ぶ)
+    result = runner.invoke(app, ["search", "テスト", "--db", str(imported_db)])
+    assert result.exit_code == 0
+    assert "images.example.com" not in result.output
+
+
+def test_search_rejects_negative_limit(imported_db: Path) -> None:
+    result = runner.invoke(app, ["search", "Book", "-n", "-1", "--db", str(imported_db)])
+    assert result.exit_code != 0
+
+
 def test_search_escapes_percent_wildcard(imported_db: Path) -> None:
     result = runner.invoke(app, ["search", "50%", "--db", str(imported_db)])
     assert result.exit_code == 0
@@ -364,6 +412,22 @@ def test_authors(imported_db: Path) -> None:
     assert result.exit_code == 0
     assert "山田太郎" in result.output
     assert result.output.find("山田太郎") < result.output.find("Alice Brown")
+
+
+def test_authors_limit_shows_total(imported_db: Path) -> None:
+    result = runner.invoke(app, ["authors", "-n", "2", "--db", str(imported_db)])
+    assert result.exit_code == 0
+    assert "山田太郎" in result.output
+    assert "Alice Brown" in result.output
+    assert "Jane Doe" not in result.output
+    assert "Showing 2 of 7 authors" in result.output
+
+
+def test_authors_all_with_zero_limit(imported_db: Path) -> None:
+    result = runner.invoke(app, ["authors", "-n", "0", "--db", str(imported_db)])
+    assert result.exit_code == 0
+    assert "佐藤花子" in result.output
+    assert "Showing 7 of 7 authors" in result.output
 
 
 def test_recent(imported_db: Path) -> None:

@@ -16,7 +16,7 @@ kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB�
 
 - CLI の `kindb query` は、`SELECT` / `WITH` の末尾に `LIMIT` がないと拒否する(集計関数だけの SELECT は除く)。拒否されたら `LIMIT` を足して再実行する。
 - CLI の DB は既定で `~/.kindb/kindle.duckdb`。`--db <path>` か環境変数 `KINDB_DB_PATH` で変えられる。
-- `kindb search <語>` は書名、著者、ASIN、`read_status` の部分一致を表で返す。件数の上限がないため、ヒットが多そうな語では下の検索クエリを使う。
+- `kindb search <語>` は書名、著者、ASIN、`read_status` の部分一致を、既定で 50 件まで表で返す。最後の行の `Showing 50 of 1198 results` のように総件数が表示件数より多ければ、下の検索クエリで件数を数えてからページングする。
 
 ## 手順
 

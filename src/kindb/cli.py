@@ -23,6 +23,19 @@ def _db_option() -> Path:
     return typer.Option(None, "--db", help="Database path (default: ~/.kindb/kindle.duckdb)")
 
 
+def _list_limit_option() -> int:
+    # Claude Code の Bash は既定 30,000 文字を超える出力を切り詰めるため、一覧は既定で件数を絞る
+    return typer.Option(50, "--limit", "-n", min=0, help="Maximum rows to show (0 = all)")
+
+
+def _print_shown_total(shown: int, total: int, noun: str) -> None:
+    # 切り詰めに気づけるよう、表示件数と総件数を必ず出す
+    message = f"Showing {shown} of {total} {noun}."
+    if shown < total:
+        message += " Use -n 0 to show all."
+    console.print(message)
+
+
 def _escape_like(term: str) -> str:
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
@@ -129,6 +142,7 @@ def status(db: Optional[str] = _db_option()) -> None:
 @app.command()
 def search(
     term: str = typer.Argument(..., help="Search term"),
+    limit: int = _list_limit_option(),
     db: Optional[str] = _db_option(),
 ) -> None:
     """Search books by title, authors, ASIN, or read status."""
@@ -137,31 +151,34 @@ def search(
     con = connect(db_path, read_only=True)
     try:
         like = f"%{_escape_like(term)}%"
-        rows = con.execute(
-            r"""SELECT asin, title, authors, read_status, product_image_url, acquired_at
-               FROM v_books
+        params: list = [like, like, like, like]
+        where = r"""FROM v_books
                WHERE title ILIKE ? ESCAPE '\'
                   OR authors_text ILIKE ? ESCAPE '\'
                   OR asin ILIKE ? ESCAPE '\'
-                  OR read_status ILIKE ? ESCAPE '\'
-               ORDER BY title ASC, asin ASC""",
-            [like, like, like, like],
-        ).fetchall()
-
-        if not rows:
+                  OR read_status ILIKE ? ESCAPE '\'"""
+        total = con.execute(f"SELECT count(*) {where}", params).fetchone()[0]
+        if total == 0:
             console.print("No results found.")
             return
+
+        # 表紙 URL は表を折り返して 1 冊を数行に広げるため出さない。必要なら kindb query で選ぶ
+        sql = f"SELECT asin, title, authors, read_status, acquired_at {where} ORDER BY title ASC, asin ASC"
+        if limit:
+            sql += " LIMIT ?"
+            params = [*params, limit]
+        rows = con.execute(sql, params).fetchall()
 
         table = Table(title=f"Search: {term}")
         table.add_column("ASIN", style="dim")
         table.add_column("Title")
         table.add_column("Authors")
         table.add_column("Status")
-        table.add_column("Image URL")
         table.add_column("Acquired")
         for row in rows:
-            table.add_row(row[0], row[1], _format_value(row[2]), row[3], row[4] or "", _format_value(row[5]))
+            table.add_row(row[0], row[1], _format_value(row[2]), row[3], _format_value(row[4]))
         console.print(table)
+        _print_shown_total(len(rows), total, "results")
     finally:
         con.close()
 
@@ -388,15 +405,21 @@ def _format_value(value: object) -> str:
 
 
 @app.command()
-def authors(db: Optional[str] = _db_option()) -> None:
+def authors(
+    limit: int = _list_limit_option(),
+    db: Optional[str] = _db_option(),
+) -> None:
     """Show authors by book count."""
+    sql = """SELECT author_name, book_count
+           FROM v_author_counts
+           ORDER BY book_count DESC, author_name ASC"""
     _run_table_query(
         db,
-        """SELECT author_name, book_count
-           FROM v_author_counts
-           ORDER BY book_count DESC, author_name ASC""",
+        sql + (" LIMIT ?" if limit else ""),
         title="Authors",
         columns=[("Author", None), ("Books", "right")],
+        params=[limit] if limit else None,
+        total=("SELECT count(*) FROM v_author_counts", "authors"),
     )
 
 
@@ -454,7 +477,9 @@ def _run_table_query(
     title: str,
     columns: list[tuple[str, str | None]],
     params: list | None = None,
+    total: tuple[str, str] | None = None,
 ) -> None:
+    """total は (総件数を数える SQL, 件数表示の名詞)。渡すと表の後に表示件数と総件数を出す。"""
     db_path = _require_db(db)
     con = connect(db_path, read_only=True)
     try:
@@ -469,6 +494,9 @@ def _run_table_query(
         for row in rows:
             table.add_row(*[_format_value(v) for v in row])
         console.print(table)
+        if total is not None:
+            total_sql, noun = total
+            _print_shown_total(len(rows), con.execute(total_sql).fetchone()[0], noun)
     finally:
         con.close()
 

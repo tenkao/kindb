@@ -163,9 +163,9 @@ DB パスは、`--db` → 環境変数 `KINDB_DB_PATH` → `~/.kindb/kindle.duck
 | コマンド | 仕様 |
 |---|---|
 | `status` | 最終取り込み日時、source、冊数、著者数、`read_status` ごとの冊数(値を固定せず GROUP BY で列挙)、表紙 URL がある冊数。zip 取り込み済みなら公式 import の情報も表示する |
-| `search <term>` | `v_books` の `title` / `authors_text` / `asin` / `read_status` を ILIKE で検索する。`%` `_` `\` はエスケープする。並びは `title, asin`。件数の上限はない |
+| `search <term>` | `v_books` の `title` / `authors_text` / `asin` / `read_status` を ILIKE で検索する。`%` `_` `\` はエスケープする。並びは `title, asin`。`-n` 件(既定 50、`0` で全件)まで表示し、最後に表示件数と総件数を出す。表紙 URL は出さない |
 | `query <sql>` | 下記「query の制約」を参照 |
-| `authors` | `v_author_counts` の全行を表示する |
+| `authors` | `v_author_counts` を `-n` 件(既定 50、`0` で全件)まで表示し、最後に表示件数と総件数を出す |
 | `recent` | `acquired_at DESC, asin DESC` で `-n` 件(既定 20 件) |
 | `delete` | DB ファイルと `<db>.wal` を削除する。`--yes` で確認を省く |
 

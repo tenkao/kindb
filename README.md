@@ -56,8 +56,8 @@ kindb import-official path/to/Kindle.zip    # 任意。公式データを追加�
 
 ```bash
 kindb status          # 取り込み日時、冊数、著者数、読了マーク別の冊数など
-kindb search 検索語    # 書名、著者、ASIN、読了マークの部分一致
-kindb authors         # 著者別の冊数
+kindb search 検索語    # 書名、著者、ASIN、読了マークの部分一致(既定 50 件、-n で変更、-n 0 で全件)
+kindb authors         # 著者別の冊数(既定 50 人、-n で変更、-n 0 で全員)
 kindb recent          # 最近ライブラリに入った本(既定 20 冊、-n で変更)
 ```
 

@@ -253,12 +253,17 @@ kindb search 山田 --db "$TEST_DB"
 kindb search B000TEST02 --db "$TEST_DB"
 kindb search READING --db "$TEST_DB"
 kindb search ZZZZZ --db "$TEST_DB"
+kindb search B000TEST -n 2 --db "$TEST_DB"
+kindb search B000TEST -n 0 --db "$TEST_DB"
 ```
 
 期待:
 - title / authors_text / asin / read_status で検索できる。
 - ヒットなしは `No results found.` で終了コード 0。
 - 表示順は `title ASC, asin ASC` で安定している。
+- 表に表紙 URL の列はない。
+- `-n 2` では 2 件だけ表示され、最後に `Showing 2 of 5 results. Use -n 0 to show all.` と出る。
+- `-n 0` では全件が表示され、最後に `Showing 5 of 5 results.` と出る。
 
 ワイルドカードエスケープ:
 
@@ -295,11 +300,14 @@ for i in 1 2 3 4; do (kindb query "SELECT count(*) AS n FROM v_books" --db "$TES
 
 ```bash
 kindb authors --db "$TEST_DB"
+kindb authors -n 2 --db "$TEST_DB"
 ```
 
 期待:
 - `book_count DESC, author_name ASC` で表示される。
 - 同冊数時の並びが安定している。
+- 既定では最後に `Showing 7 of 7 authors.` と出る。
+- `-n 2` では 2 人だけ表示され、最後に `Showing 2 of 7 authors. Use -n 0 to show all.` と出る。
 
 ## 6. recent
 
