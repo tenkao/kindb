@@ -280,6 +280,7 @@ kindb query --allow-unlimited --table "SELECT asin, title, read_status FROM v_bo
 kindb query "DELETE FROM books" --db "$TEST_DB"; echo "exit=$?"
 kindb query "SELECT 1; UPDATE books SET title='hacked' WHERE asin='B000TEST01'" --db "$TEST_DB"; echo "exit=$?"
 kindb query "SELECT repeat('長い書名', 40) || ' [bold]x[/bold]' AS t LIMIT 1" --db "$TEST_DB" | python3 -m json.tool
+for i in 1 2 3 4; do (kindb query "SELECT count(*) AS n FROM v_books" --db "$TEST_DB" > /dev/null; echo "parallel$i exit=$?") & done; wait
 ```
 
 期待:
@@ -287,6 +288,7 @@ kindb query "SELECT repeat('長い書名', 40) || ' [bold]x[/bold]' AS t LIMIT 1
 - 行返却 SELECT は `LIMIT` なしでは拒否されて `exit=1` になり、`--allow-unlimited` 付きなら実行できる。
 - 書き込み系 SQL は拒否される。
 - 先頭 SELECT の複文書き込みも単一文チェックで拒否されて `exit=1` になり、DB は変わらない。
+- 並列に実行した 4 本がすべて `exit=0` になる(スキーマが最新なら読み取り系コマンドは書き込み接続を開かない)。
 - パイプに流した JSON が `json.tool` で読め、値の末尾に `[bold]x[/bold]` がそのまま残る(端末幅での改行やマークアップ解釈が入らない)。
 
 ## 5. authors
@@ -368,7 +370,7 @@ kindb query --table "
 ```
 
 期待:
-- `SHOW TABLES`: `books`, `book_authors`, `import_metadata` に加え、`book_genres`, `book_series`, `book_author_ids`, `book_author_names`, `import_metadata_official` と v0.3 の view 群が表示される。
+- `SHOW TABLES`: `books`, `book_authors`, `import_metadata` に加え、`book_genres`, `book_series`, `book_author_ids`, `book_author_names`, `import_metadata_official`, `schema_meta` と v0.3 の view 群が表示される。
 - `DESCRIBE v_books`: `genres`, `series_title`, `series_asin`, `series_position`, `author_ids`, `author_names_official` が表示される。
 - `SELECT * FROM v_books`: 1 ASIN 1 行で並び、`authors` 配列・`authors_text`・`product_image_url`・`read_status`・`acquired_at` に加え、`genres`, `series_title`, `series_asin`, `series_position`, `author_ids`, `author_names_official` が表示される。
 - `SELECT * FROM v_author_counts`: `book_count DESC, author_name ASC` で並ぶ。

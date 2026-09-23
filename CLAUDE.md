@@ -22,7 +22,8 @@ kindb は、Chrome 拡張で取得した `kindle.json`(主データ)と、任意
 
 - import は `create_schema()` → `BEGIN` → `DELETE`/`INSERT` → `COMMIT` → `CHECKPOINT` の順に実行する。
 - `kindb import` と `kindb import-official` は、それぞれ自分の担当テーブルだけを書き換える。
-- スキーマは `create_schema()` の冪等な DDL で作る。既存テーブルの列を変える場合は、移行処理を別に書く。
+- スキーマは `create_schema()` の冪等な DDL で作る。`TABLES_SQL` / `VIEWS_SQL` のハッシュが変われば読み取り系コマンドが自動で移行するので、版番号の管理は要らない。既存テーブルの列を変える場合は、移行処理を別に書く。
+- 読み取り系コマンドは、スキーマが最新なら書き込み接続を開かない。並列実行や MCP サーバと共存させるため。
 - `kindb query` の JSON 出力は rich を通さずに標準出力へ書く。
 
 ## 変更したときに一緒に更新する先

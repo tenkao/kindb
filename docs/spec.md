@@ -103,6 +103,7 @@ kindb の現行仕様と、その設計判断の理由をまとめる。DDL と�
 | `book_author_ids` | zip | `(asin, author_order)` | Amazon 著者 ID |
 | `book_author_names` | zip | `(asin, author_order)` | 公式著者名 |
 | `import_metadata_official` | zip | シングルトン | source の絶対パス、`source_type = 'kindle_zip'`、各テーブルの行数、ASIN の和集合の件数、取り込み時刻 |
+| `schema_meta` | kindb | シングルトン | 最後に適用したスキーマのハッシュ(下記「スキーマ移行」) |
 
 - zip 由来テーブルには外部キーを付けない。zip にしかない ASIN(個人文書など)も生データとして残し、ビューで除外する。
 - `book_series.series_asin` を抽出できなかった行は、空文字列 `''` を入れる。DuckDB の主キー列には NULL を入れられないため。ビューは `NULLIF(series_asin, '')` で NULL に戻して返す。
@@ -145,9 +146,11 @@ zip 由来の LIST 列は、空配列を明示的に `CAST([] AS VARCHAR[])` で
 
 ## スキーマ移行
 
-`create_schema()` は `CREATE TABLE IF NOT EXISTS` と `CREATE OR REPLACE VIEW` だけで構成され、何度実行しても結果は同じ。
+`create_schema()` は `CREATE TABLE IF NOT EXISTS` と `CREATE OR REPLACE VIEW` だけで構成され、何度実行しても結果は同じ。最後に `TABLES_SQL` と `VIEWS_SQL` の SHA-256(`SCHEMA_HASH`)を `schema_meta` に記録する。
 
-- 読み取り系コマンド(`status` / `search` / `query` / `authors` / `recent`)は、読み取り専用で接続する前に `ensure_schema()` を呼ぶ。DB ファイルがなければ何もせず、「No database found.」のエラーを出す。
+- 読み取り系コマンド(`status` / `search` / `query` / `authors` / `recent`)は、`ensure_schema()` を呼んでから読み取り専用で接続する。`ensure_schema()` は、まず読み取り専用で `schema_meta` のハッシュを照合し、一致しないとき(テーブルがない旧版の DB を含む)だけ書き込み接続で `create_schema()` を実行する。DB ファイルがなければ何もせず、「No database found.」のエラーを出す。
+- 書き込み接続を必要なときだけ開くのは、DuckDB では書き込み接続が別プロセスの接続(読み取り専用を含む)と共存できないため。毎回開くと、読み取り系コマンドの並列実行や、MCP サーバの問い合わせとぶつかる。ただし移行が必要な最初の 1 回(kindb の更新後やスキーマ変更後)は書き込み接続を開くので、その瞬間に別の接続があれば衝突しうる。
+- 版をハッシュで表すので、`TABLES_SQL` / `VIEWS_SQL` を変更すれば、次の読み取り系コマンドで自動的に移行される。コメントだけの変更でも 1 回移行が走るが、結果は同じなので害はない。
 - import 系は手順 2 で `create_schema()` を直接呼ぶ。
 - 既存テーブルへの列追加や型変更はこの仕組みでは反映されない。必要になったら明示的な移行処理を追加する。
 

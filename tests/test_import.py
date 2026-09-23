@@ -217,6 +217,7 @@ def test_schema_tables_and_views(imported_db: Path) -> None:
             "books",
             "import_metadata",
             "import_metadata_official",
+            "schema_meta",
             "v_author_counts",
             "v_author_id_counts",
             "v_book_authors_official",
@@ -301,6 +302,24 @@ def test_ensure_schema_migrates_v02_database(tmp_path: Path) -> None:
             "author_ids",
             "author_names_official",
         ]
+    finally:
+        con.close()
+
+
+def test_ensure_schema_recreates_views_when_schema_is_stale(imported_db: Path) -> None:
+    con = connect(imported_db)
+    try:
+        con.execute("CREATE OR REPLACE VIEW v_genre_counts AS SELECT 1 AS x")
+        con.execute("UPDATE schema_meta SET schema_hash = 'stale'")
+    finally:
+        con.close()
+
+    ensure_schema(imported_db)
+
+    con = connect(imported_db, read_only=True)
+    try:
+        cols = [desc[0] for desc in con.execute("SELECT * FROM v_genre_counts LIMIT 0").description]
+        assert cols == ["genre", "book_count"]
     finally:
         con.close()
 

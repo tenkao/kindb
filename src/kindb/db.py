@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -74,6 +75,10 @@ CREATE TABLE IF NOT EXISTS import_metadata_official (
     author_names_count INTEGER,
     distinct_asin_count INTEGER,
     imported_at TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS schema_meta (
+    schema_hash VARCHAR NOT NULL
 );
 """
 
@@ -235,6 +240,10 @@ ORDER BY c.book_count DESC, author_name ASC, c.author_id ASC;
 """
 
 
+# 手で上げる版番号は上げ忘れるため、DDL の文字列そのもののハッシュでスキーマの版を表す
+SCHEMA_HASH = hashlib.sha256((TABLES_SQL + VIEWS_SQL).encode()).hexdigest()
+
+
 def get_db_path(db: str | None = None) -> Path:
     if db:
         return Path(db)
@@ -255,11 +264,27 @@ def connect(db_path: Path | str, *, read_only: bool = False) -> duckdb.DuckDBPyC
 def create_schema(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(TABLES_SQL)
     con.execute(VIEWS_SQL)
+    con.execute("DELETE FROM schema_meta")
+    con.execute("INSERT INTO schema_meta VALUES (?)", [SCHEMA_HASH])
+
+
+def _schema_is_current(db_path: Path) -> bool:
+    con = connect(db_path, read_only=True)
+    try:
+        row = con.execute("SELECT schema_hash FROM schema_meta").fetchone()
+    except duckdb.CatalogException:
+        return False
+    finally:
+        con.close()
+    return row is not None and row[0] == SCHEMA_HASH
 
 
 def ensure_schema(db_path: Path | str) -> None:
     db_path = Path(db_path)
     if not db_path.exists():
+        return
+    # 書き込み接続は他プロセスの接続(読み取り専用を含む)と共存できないため、移行が必要なときだけ開く
+    if _schema_is_current(db_path):
         return
     con = connect(db_path)
     try:

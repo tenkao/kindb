@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -67,6 +69,28 @@ def test_status_with_db(imported_db: Path) -> None:
     assert "Read status: READING" in result.output
     assert "Read status: UNKNOWN" in result.output
     assert "With image URL" in result.output
+
+
+def test_read_command_runs_while_another_process_reads(imported_db: Path) -> None:
+    # MCP サーバや並列実行された kindb が読み取り接続を持っていても、スキーマが最新なら読み取り系コマンドは通る
+    reader = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import duckdb, sys; con = duckdb.connect(sys.argv[1], read_only=True); print('ready', flush=True); "
+            "sys.stdin.read(); con.close()",
+            str(imported_db),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert reader.stdout.readline().strip() == "ready"
+        result = runner.invoke(app, ["status", "--db", str(imported_db)])
+        assert result.exit_code == 0, result.output
+    finally:
+        reader.communicate(input="")
 
 
 def test_search_by_title(imported_db: Path) -> None:
