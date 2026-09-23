@@ -194,16 +194,18 @@ INNER JOIN books b ON b.asin = coalesce(ai.asin, an.asin)
 ORDER BY asin ASC, author_order ASC;
 
 CREATE OR REPLACE VIEW v_author_id_counts AS
+-- 名前が対応しない本は多数決に入れない。入れると名前のない本が多い著者で '(unknown)' が勝つ。
+-- 候補が 1 つもない著者 ID だけ、最後の coalesce で '(unknown)' にする。
 WITH paired_names AS (
     SELECT
         ai.author_id,
-        coalesce(an.author_name, '(unknown)') AS author_name,
+        an.author_name,
         count(*) AS name_count
     FROM book_author_ids ai
     INNER JOIN books b ON b.asin = ai.asin
-    LEFT JOIN book_author_names an
+    INNER JOIN book_author_names an
       ON an.asin = ai.asin AND an.author_order = ai.author_order
-    GROUP BY ai.author_id, coalesce(an.author_name, '(unknown)')
+    GROUP BY ai.author_id, an.author_name
 ),
 ranked_names AS (
     SELECT

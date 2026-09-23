@@ -160,6 +160,22 @@ def test_v_books_without_official_import_returns_empty_lists(imported_db: Path) 
         con.close()
 
 
+def test_v_author_id_counts_prefers_known_name_over_missing(imported_db: Path) -> None:
+    # 名前が対応しない本が多数派でも、代表名は '(unknown)' ではなく実在の名前を採る
+    con = connect(imported_db)
+    try:
+        for asin in ("B000TEST01", "B000TEST02", "B000TEST03"):
+            con.execute("INSERT INTO book_author_ids VALUES (?, 'AUTH1', 1)", [asin])
+        con.execute("INSERT INTO book_author_names VALUES ('B000TEST01', '山田太郎', 1)")
+        con.execute("INSERT INTO book_author_ids VALUES ('B000TEST04', 'AUTH2', 1)")
+        rows = con.execute(
+            "SELECT author_id, author_name, book_count FROM v_author_id_counts ORDER BY author_id"
+        ).fetchall()
+    finally:
+        con.close()
+    assert rows == [("AUTH1", "山田太郎", 3), ("AUTH2", "(unknown)", 1)]
+
+
 def test_import_official_cli_and_status(imported_db: Path, tmp_path: Path) -> None:
     zip_path = create_official_zip(tmp_path / "Kindle.zip")
 

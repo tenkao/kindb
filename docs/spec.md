@@ -139,7 +139,7 @@ zip 由来の LIST 列は、空配列を明示的に `CAST([] AS VARCHAR[])` で
 | `v_book_authors_official` | `asin`, `author_order`, `author_id`, `author_name` | `asin, author_order` | 著者 ID と公式著者名を `(asin, author_order)` で FULL OUTER JOIN。片方しかない順位はもう片方が NULL |
 | `v_author_id_counts` | `author_id`, `author_name`, `book_count` | `book_count DESC, author_name ASC, author_id ASC` | 著者 ID ごとの冊数。同名で別 ID の著者を区別する |
 
-`v_author_id_counts.author_name` は、著者 ID ごとに、各本で同じ `author_order` に並ぶ公式著者名を集め、最も多く現れた名前を採る。同数なら辞書順で最小の名前を採る。名前が対応しない本は `'(unknown)'` として数えるため、名前のない本が多い著者 ID では `'(unknown)'` が選ばれる(既知の問題)。
+`v_author_id_counts.author_name` は、著者 ID ごとに、各本で同じ `author_order` に並ぶ公式著者名を集め、最も多く現れた名前を採る。同数なら辞書順で最小の名前を採る。名前が対応しない本は多数決に入れず、候補が 1 つもない著者 ID だけ `'(unknown)'` にする。
 
 ビュー定義の `ORDER BY` は結果の順序を保証せず、一意になるとも限らない。順序が必要な問い合わせでは、呼び出し側で一意な列まで含めた `ORDER BY` を書く(`SKILL.md` の「その他のビュー」の表を参照)。
 
