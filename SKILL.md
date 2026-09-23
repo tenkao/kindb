@@ -12,7 +12,7 @@ kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB�
 | 環境 | 実行方法 |
 |---|---|
 | CLI(`kindb` コマンドがある。Claude Code など) | `kindb query "<SQL>"` で実行し、JSON で受け取る |
-| MCP(`execute_query` ツールがある。Claude Desktop など) | `execute_query` に SQL を渡す。列名の確認は `list_columns` |
+| MCP(MCP サーバ `kindb` がある。Claude Desktop など) | サーバ `kindb` の `execute_query` に SQL を渡す。列名の確認は同じサーバの `list_columns`。ほかの DuckDB 用 MCP サーバにも同じ名前のツールがあるので、サーバ名で見分ける |
 
 - CLI の `kindb query` は、`SELECT` / `WITH` の末尾に `LIMIT` がないと拒否する(集計関数だけの SELECT は除く)。拒否されたら `LIMIT` を足して再実行する。
 - CLI の DB は既定で `~/.kindb/kindle.duckdb`。`--db <path>` か環境変数 `KINDB_DB_PATH` で変えられる。

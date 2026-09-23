@@ -100,7 +100,7 @@ ln -s "$(pwd)/SKILL.md" ~/.claude/skills/kindb/SKILL.md
 
 ### Claude Desktop
 
-1. **MCP サーバを設定する。** Claude Desktop の設定ファイルに以下を追加する。`<HOME>` は自分のホームディレクトリの絶対パスに置き換える。
+1. **MCP サーバを設定する。** Claude Desktop の設定ファイルに以下を追加する。`<HOME>` は自分のホームディレクトリの絶対パスに置き換える。サーバ名は `kindb` のままにする(`SKILL.md` がこの名前でサーバを見分けるため)。
 
    ```json
    {
