@@ -6,15 +6,14 @@ kindb v0.3 を実際のターミナルで目視確認するためのシナリオ
 
 ```bash
 cd /path/to/kindb
-python3 -m venv venv
-source venv/bin/activate
-pip install -e ".[dev]"
+uv sync
+uv tool install --editable .   # kindb をグローバルコマンドとして使う
 
 export TEST_DB=/tmp/kindb_manual/test.duckdb
 rm -rf /tmp/kindb_manual && mkdir -p /tmp/kindb_manual
 
-python -m tests.create_fixture
-python - <<'PY'
+uv run python -m tests.create_fixture
+uv run python - <<'PY'
 from pathlib import Path
 from tests.create_official_fixture import create_official_zip
 create_official_zip(Path("/tmp/kindb_manual/Kindle.zip"))
@@ -22,7 +21,7 @@ PY
 ls tests/fixtures/kindle.json
 ls /tmp/kindb_manual/Kindle.zip
 
-ruff check . && pytest -q
+uv run ruff check . && uv run pytest -q
 ```
 
 期待:
@@ -114,7 +113,7 @@ ls -la "$TEST_DB"*
 未知キー警告:
 
 ```bash
-python - <<'PY'
+uv run python - <<'PY'
 import json
 from pathlib import Path
 p = Path("/tmp/kindb_manual/unknown.json")
@@ -165,7 +164,7 @@ kindb query "SELECT count(*) AS n FROM v_book_genres" --db /tmp/kindb_manual/off
 必須ファイル欠落:
 
 ```bash
-python - <<'PY'
+uv run python - <<'PY'
 from pathlib import Path
 import zipfile
 
@@ -187,7 +186,7 @@ kindb import-official /tmp/kindb_manual/Kindle_missing_author_names.zip --db "$T
 ヘッダ不一致:
 
 ```bash
-python - <<'PY'
+uv run python - <<'PY'
 from pathlib import Path
 import zipfile
 
@@ -414,7 +413,7 @@ kindb query "SELECT count(*) AS n FROM v_book_genres WHERE asin = 'B000ZIP001'" 
 新テーブル/view が無い DB を作って、読み取り CLI が自動で schema を更新することを確認する。
 
 ```bash
-python - <<'PY'
+uv run python - <<'PY'
 from pathlib import Path
 from kindb.db import connect
 

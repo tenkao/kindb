@@ -13,24 +13,24 @@ kindb は Chrome 拡張などで取得した `kindle.json` を DuckDB に取り�
 ## Commands
 
 ```bash
-# Create virtualenv
-# macOS + Python 3.13: use venv/ instead of .venv/ because hidden .pth files are skipped by site.py.
-python3 -m venv venv
-source venv/bin/activate
+# Create / update .venv (Python 3.13 pinned by .python-version, dev group included)
+# Do not place the project under iCloud-synced dirs (~/Documents etc.): .pth files created there
+# get the macOS hidden flag and Python 3.13+ site.py skips them, breaking the editable install.
+uv sync
 
-# Install (editable)
-pip install -e ".[dev]"
+# Run CLI (dev)
+uv run kindb <subcommand>
 
-# Run CLI
-kindb <subcommand>
+# Global command (editable; rerun with --reinstall after dependency changes or moving the project)
+uv tool install --editable .
 
 # Lint
-ruff check .
+uv run ruff check .
 
 # Test
-pytest
-pytest tests/test_import.py::test_import_creates_db -v
+uv run pytest
+uv run pytest tests/test_import.py::test_import_creates_db -v
 
 # Lint + Test
-ruff check . && pytest
+uv run ruff check . && uv run pytest
 ```

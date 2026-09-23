@@ -24,13 +24,16 @@ Chrome 拡張「[Kindle bookshelf exporter](https://chromewebstore.google.com/de
 
 ## インストール
 
-Python >= 3.10。
+Python >= 3.10。開発環境は [uv](https://docs.astral.sh/uv/) で管理し、`.python-version` で Python 3.13 に固定している。
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -e ".[dev]"
+uv sync                          # .venv を作成し、開発依存込みでインストール
+uv tool install --editable .     # kindb をグローバルコマンドとして ~/.local/bin に入れる
 ```
+
+依存を変更したときは `uv tool install --editable . --reinstall` で tool 環境を更新する。
+
+uv を使わない場合は、任意の仮想環境で `pip install -e .` を実行する(ランタイム依存のみ)。
 
 ## 使い方
 
@@ -236,7 +239,7 @@ cp SKILL.md ~/.claude/skills/kindb/SKILL.md
 ## 開発
 
 ```bash
-ruff check . && pytest
+uv run ruff check . && uv run pytest
 ```
 
 テスト用の最小 `kindle.json` は `tests/create_fixture.py` が動的に生成する。

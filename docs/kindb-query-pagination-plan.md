@@ -157,8 +157,8 @@ kindb query "SELECT title FROM v_books FETCH FIRST 10 ROWS ONLY"
 検証コマンド:
 
 ```bash
-uv run --extra dev pytest
-uv run --extra dev ruff check .
+uv run pytest
+uv run ruff check .
 ```
 
 ## Assumptions
