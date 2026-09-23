@@ -21,8 +21,16 @@ uv sync
 # Run CLI (dev)
 uv run kindb <subcommand>
 
-# Global command (editable; rerun with --reinstall after dependency changes or moving the project)
-uv tool install --editable .
+# Global command (editable; rerun after dependency changes or moving the project)
+# uv tool install ignores uv.lock, so pin versions via constraints exported from it.
+# Never use `uv tool upgrade kindb`: it keeps the constraints stored at install time.
+# Dependency update procedure: see README.md「依存更新の手順」
+uv export --locked --no-dev --no-emit-project --no-hashes --no-annotate --format requirements.txt -o constraints.txt \
+  && uv tool install --editable . --reinstall --python 3.13 --constraints constraints.txt
+
+# Check .venv and tool env drift (same output = in sync)
+uv run python -c "import sys, duckdb; print(sys.version.split()[0], duckdb.__version__)"
+~/.local/share/uv/tools/kindb/bin/python -c "import sys, duckdb; print(sys.version.split()[0], duckdb.__version__)"
 
 # Lint
 uv run ruff check .

@@ -28,10 +28,15 @@ Python >= 3.10。開発環境は [uv](https://docs.astral.sh/uv/) で管理し�
 
 ```bash
 uv sync                          # .venv を作成し、開発依存込みでインストール
-uv tool install --editable .     # kindb をグローバルコマンドとして ~/.local/bin に入れる
+
+# kindb をグローバルコマンドとして ~/.local/bin に入れる(依存版を uv.lock に揃える)
+uv export --locked --no-dev --no-emit-project --no-hashes --no-annotate --format requirements.txt -o constraints.txt \
+  && uv tool install --editable . --reinstall --python 3.13 --constraints constraints.txt
 ```
 
-依存を変更したときは `uv tool install --editable . --reinstall` で tool 環境を更新する。
+`uv tool install` は `uv.lock` を読まないため、lock から生成した `constraints.txt` で tool 環境の依存版をテスト済みの版に揃える。`constraints.txt` は毎回生成するファイルで、コミットしない。
+
+依存を更新するときは「[開発](#開発)」の「依存更新の手順」に従う。`uv tool upgrade kindb` は初回インストール時の制約をそのまま使い、lock の更新を反映しないので使わない。
 
 uv を使わない場合は、任意の仮想環境で `pip install -e .` を実行する(ランタイム依存のみ)。
 
@@ -243,6 +248,24 @@ uv run ruff check . && uv run pytest
 ```
 
 テスト用の最小 `kindle.json` は `tests/create_fixture.py` が動的に生成する。
+
+### 依存更新の手順
+
+```bash
+uv lock --upgrade \
+  && uv sync \
+  && uv run ruff check . \
+  && uv run pytest \
+  && uv export --locked --no-dev --no-emit-project --no-hashes --no-annotate --format requirements.txt -o constraints.txt \
+  && uv tool install --editable . --reinstall --python 3.13 --constraints constraints.txt \
+  && uv run python -m tests.create_fixture \
+  && kindb import tests/fixtures/kindle.json --db /tmp/kindb_check.duckdb \
+  && kindb status --db /tmp/kindb_check.duckdb
+```
+
+全体を `&&` で 1 本につなぎ、lint やテストが失敗した時点で止める。未検証の依存で tool を入れ直す経路を残さないため(対話シェルに `set -e` を貼るとシェル自体が終了するので使わない)。最後の 2 行は tool 環境で import(書き込み経路)と status(読み取り経路)を通す確認で、実 DB ではなく fixture から作る一時 DB を使う。
+
+特定パッケージだけ上げるなら先頭を `uv lock --upgrade-package <name>` に置き換える。テストが失敗したら `git restore uv.lock` で更新前の lock に戻し、`--upgrade-package` で通るパッケージだけ個別に上げて再実行する。`uv lock --upgrade` は lock 全体を書き換えているため、戻さずに `--upgrade-package` を重ねても問題のパッケージは戻らない。
 
 ## 関連ドキュメント
 

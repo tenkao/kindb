@@ -7,7 +7,9 @@ kindb v0.3 を実際のターミナルで目視確認するためのシナリオ
 ```bash
 cd /path/to/kindb
 uv sync
-uv tool install --editable .   # kindb をグローバルコマンドとして使う
+# kindb をグローバルコマンドとして使う(依存版を uv.lock に揃える)
+uv export --locked --no-dev --no-emit-project --no-hashes --no-annotate --format requirements.txt -o constraints.txt \
+  && uv tool install --editable . --reinstall --python 3.13 --constraints constraints.txt
 
 export TEST_DB=/tmp/kindb_manual/test.duckdb
 rm -rf /tmp/kindb_manual && mkdir -p /tmp/kindb_manual
