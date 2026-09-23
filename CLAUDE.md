@@ -29,10 +29,10 @@ kindb は、Chrome 拡張で取得した `kindle.json`(主データ)と、任意
 
 | 変更内容 | 一緒に更新する先 |
 |---|---|
-| テーブル、ビュー、列 | `db.py` → `docs/spec.md` → `SKILL.md` → `tests/` → 手動テスト §8 |
+| テーブル、ビュー、列 | `db.py`(`books` などの列を足すなら `importer.py` と既存テーブルの移行処理も) → `docs/spec.md` → `SKILL.md` → `tests/` → 手動テスト §8 |
 | CLI の引数や出力 | `cli.py` → `docs/spec.md` の CLI 節 → `README.md` → 手動テスト |
 | import の検証や変換 | `importer.py` → `docs/spec.md` → `tests/` |
-| AI 向けの問い合わせ規則 | `SKILL.md` のみ(README は SKILL.md へのリンクに留める) |
+| AI 向けの問い合わせ規則 | `SKILL.md` → README の会話冒頭文(Skill を使えない環境向けの要約) |
 
 ## 実行時の注意
 

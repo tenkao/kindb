@@ -60,7 +60,7 @@ kindb の現行仕様と、その設計判断の理由をまとめる。DDL と�
 - `Series Title` / `Series Author` は末尾の ` B[0-9A-Z]{9}` を ASIN として分離する。分離できなければ全体を名前とする。`Series Title` が値なしの行と `Relation Type` が値なしの行は捨てる。
 - `Position In Collection` は整数に変換できれば INTEGER、できなければ NULL。
 - `(asin, genre)` の重複は 1 件にまとめる。
-- 著者 ID と著者名は、ASIN ごとに最初の出現だけを残し、残った順に `author_order` を 1 から振り直す。
+- 著者 ID と著者名は、同じ ASIN 内で同じ値が重複したら最初の出現だけを残し、残った順に `author_order` を 1 から振り直す。
 - `book_series` は `(asin, series_asin, relation_type)` の最初の行を採る。
 
 著者名は翻訳者やイラストレーターを含むため、著者 ID より行数が多い(実データで 4,145 行と 3,614 行)。このため 2 つは別テーブルにし、`author_order` による対応づけはヒューリスティックとして扱う。
@@ -110,7 +110,7 @@ kindb の現行仕様と、その設計判断の理由をまとめる。DDL と�
 
 ## ビュー
 
-問い合わせは原則としてビューを使う。`v_books` 以外のビューは `books` との INNER JOIN で絞るため、`books` にない ASIN は現れない。
+問い合わせは原則としてビューを使う。zip 由来のビューは `books` との INNER JOIN で絞るため、`books` にない ASIN は現れない。
 
 ### `v_books`
 
@@ -129,7 +129,7 @@ zip 由来の LIST 列は、空配列を明示的に `CAST([] AS VARCHAR[])` で
 
 ### 集計と展開のビュー
 
-| ビュー | 列 | 並び順 | 内容 |
+| ビュー | 列 | 定義上の ORDER BY | 内容 |
 |---|---|---|---|
 | `v_author_counts` | `author_name`, `book_count` | `book_count DESC, author_name ASC` | `kindle.json` の著者名ごとの冊数。zip なしで使える |
 | `v_book_genres` | `asin`, `title`, `genre` | `genre, title, asin` | 本とジャンルを 1:N に展開 |
@@ -139,9 +139,9 @@ zip 由来の LIST 列は、空配列を明示的に `CAST([] AS VARCHAR[])` で
 | `v_book_authors_official` | `asin`, `author_order`, `author_id`, `author_name` | `asin, author_order` | 著者 ID と公式著者名を `(asin, author_order)` で FULL OUTER JOIN。片方しかない順位はもう片方が NULL |
 | `v_author_id_counts` | `author_id`, `author_name`, `book_count` | `book_count DESC, author_name ASC, author_id ASC` | 著者 ID ごとの冊数。同名で別 ID の著者を区別する |
 
-`v_author_id_counts.author_name` は、著者 ID ごとに、各本で同じ `author_order` に並ぶ公式著者名を集め、最も多く現れた名前を採る。同数なら辞書順で最小の名前、対応する名前がなければ `'(unknown)'`。
+`v_author_id_counts.author_name` は、著者 ID ごとに、各本で同じ `author_order` に並ぶ公式著者名を集め、最も多く現れた名前を採る。同数なら辞書順で最小の名前を採る。名前が対応しない本は `'(unknown)'` として数えるため、名前のない本が多い著者 ID では `'(unknown)'` が選ばれる(既知の問題)。
 
-ビュー定義の `ORDER BY` は結果の順序を保証しない。順序が必要な問い合わせでは、呼び出し側で `ORDER BY` を書く。
+ビュー定義の `ORDER BY` は結果の順序を保証せず、一意になるとも限らない。順序が必要な問い合わせでは、呼び出し側で一意な列まで含めた `ORDER BY` を書く(`SKILL.md` の「その他のビュー」の表を参照)。
 
 ## スキーマ移行
 

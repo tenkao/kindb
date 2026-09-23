@@ -16,7 +16,7 @@ kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB�
 
 - CLI の `kindb query` は、`SELECT` / `WITH` の末尾に `LIMIT` がないと拒否する(集計関数だけの SELECT は除く)。拒否されたら `LIMIT` を足して再実行する。
 - CLI の DB は既定で `~/.kindb/kindle.duckdb`。`--db <path>` か環境変数 `KINDB_DB_PATH` で変えられる。
-- `kindb search <語>` は書名、著者、ASIN の部分一致を表で返す。件数の上限がないため、ヒットが多そうな語では下の検索クエリを使う。
+- `kindb search <語>` は書名、著者、ASIN、`read_status` の部分一致を表で返す。件数の上限がないため、ヒットが多そうな語では下の検索クエリを使う。
 
 ## 手順
 
@@ -29,6 +29,8 @@ kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB�
      (SELECT count(*) FROM import_metadata_official) > 0 AS has_official
    LIMIT 1;
    ```
+
+   MCP でこのクエリがテーブルの欠落で失敗したら、DB が未作成か古い版のスキーマのまま。利用者に CLI で `kindb import <kindle.json>`(未作成のとき)か `kindb status`(スキーマを更新する)を一度実行してもらう。
 
 2. **ビューを選ぶ。** 下の「ビュー」から選ぶ。ジャンル、シリーズ、著者 ID が必要なのに公式データがない場合は、`kindb import-official <Kindle.zip>` での取り込みが必要だと伝える。
 3. **件数を数えてから取得する。** 一覧は `count(*)` で総数を確かめ、`LIMIT n OFFSET m` でページごとに取る。`ORDER BY` の最後には一意になる列(`v_books` なら `asin`)を置く。すべてを答えるときは、取得した行数が総数に一致するまで `OFFSET` を進める。
@@ -53,7 +55,7 @@ kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB�
 | `title` | 書名 |
 | `authors` | 著者名の配列(`VARCHAR[]`)。特定の著者は `list_contains(authors, '名前')` で引く |
 | `authors_text` | 著者の元の文字列(`", "` 区切り)。部分一致は `ILIKE` で引く |
-| `read_status` | `READ` / `UNKNOWN` |
+| `read_status` | 実データでは `READ` / `UNKNOWN`。ほかの値が入ることもある |
 | `product_image_url` | 表紙画像 URL。ない本は NULL |
 | `acquired_at` | ライブラリに入った日時(UTC) |
 | `genres` | ジャンルの配列。公式データがない本は `[]` |
@@ -63,7 +65,7 @@ kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB�
 
 ### その他のビュー
 
-`ORDER BY` 列は、ページングで結果が一意に並ぶ並び順。
+`ORDER BY` 列は、ページングで結果を一意に並べるための `ORDER BY`。
 
 | ビュー | 列 | `ORDER BY` | 用途 |
 |---|---|---|---|
@@ -71,7 +73,7 @@ kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB�
 | `v_genre_counts` | `genre`, `book_count` | `book_count DESC, genre` | ジャンル別の冊数 |
 | `v_series_counts` | `series_asin`, `series_title`, `book_count` | `book_count DESC, series_title, series_asin` | シリーズ別の冊数 |
 | `v_book_genres` | `asin`, `title`, `genre` | `genre, asin` | 本とジャンルの 1:N 展開 |
-| `v_book_series` | `series_asin`, `series_title`, `series_position`, `asin`, `title`, `relation_type` | `series_title, series_position NULLS LAST, asin, relation_type` | シリーズ内の本を巻順に見る |
+| `v_book_series` | `series_asin`, `series_title`, `series_position`, `asin`, `title`, `relation_type` | `series_title, series_position NULLS LAST, asin, series_asin, relation_type` | シリーズ内の本を巻順に見る |
 | `v_author_id_counts` | `author_id`, `author_name`, `book_count` | `book_count DESC, author_name, author_id` | 同名で別人の著者を区別した冊数 |
 | `v_book_authors_official` | `asin`, `author_order`, `author_id`, `author_name` | `asin, author_order` | 本ごとの公式著者 ID と著者名 |
 
@@ -95,7 +97,7 @@ LIMIT 50 OFFSET 0;
 SELECT asin, title, read_status, acquired_at
 FROM v_books
 WHERE list_contains(authors, '著者名')
-ORDER BY acquired_at DESC, asin
+ORDER BY acquired_at DESC, asin DESC
 LIMIT 50 OFFSET 0;
 ```
 
@@ -104,7 +106,7 @@ LIMIT 50 OFFSET 0;
 ```sql
 SELECT asin, title, authors_text, read_status, acquired_at
 FROM v_books
-ORDER BY acquired_at DESC, asin
+ORDER BY acquired_at DESC, asin DESC
 LIMIT 20 OFFSET 0;
 ```
 
@@ -147,7 +149,7 @@ LIMIT 10;
 SELECT series_position, asin, title, relation_type
 FROM v_book_series
 WHERE series_title ILIKE '%シリーズ名%'
-ORDER BY series_title, series_position NULLS LAST, asin, relation_type
+ORDER BY series_title, series_position NULLS LAST, asin, series_asin, relation_type
 LIMIT 100;
 ```
 
@@ -174,7 +176,7 @@ SELECT b.asin, b.title, b.acquired_at
 FROM v_books b
 JOIN v_book_authors_official a ON a.asin = b.asin
 WHERE a.author_id = 'B000000000'
-ORDER BY b.acquired_at DESC, b.asin
+ORDER BY b.acquired_at DESC, b.asin DESC
 LIMIT 50 OFFSET 0;
 ```
 

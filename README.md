@@ -130,7 +130,7 @@ ln -s "$(pwd)/SKILL.md" ~/.claude/skills/kindb/SKILL.md
    Skill を使えない環境では、会話の最初に次の文を貼る。
 
    ```
-   kindb(Kindle 蔵書 DB)を使う。一覧は count(*) で総数を確かめてから LIMIT/OFFSET でページングし、ORDER BY の最後に asin などの一意な列を置く。read_status = 'UNKNOWN' は「読了マークが付いていない本」と表現する。
+   kindb(Kindle 蔵書 DB)を使う。本の一覧は v_books、著者別の冊数は v_author_counts を使う。一覧は count(*) で総数を確かめてから LIMIT/OFFSET でページングし、ORDER BY の最後に asin などの一意な列を置く。read_status = 'UNKNOWN' は「読了マークが付いていない本」と表現する。
    ```
 
 ## 開発
