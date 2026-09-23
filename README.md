@@ -1,11 +1,10 @@
 # kindb
 
-Chrome 拡張「[Kindle bookshelf exporter](https://chromewebstore.google.com/detail/kindle-bookshelf-exporter/olimpmeljimffgjonlpmiaebaonnegdp)」で取得した Kindle 蔵書データ `kindle.json` を DuckDB に取り込み、Claude Desktop や Claude Code / CLI から検索・集計・分析するツール。Amazon 公式の `Kindle.zip` を任意で追加取り込みし、ジャンル・シリーズ・Amazon 著者 ID を補完できる。
+Chrome 拡張「[Kindle bookshelf exporter](https://chromewebstore.google.com/detail/kindle-bookshelf-exporter/olimpmeljimffgjonlpmiaebaonnegdp)」で取得した Kindle 蔵書データ `kindle.json` を DuckDB に取り込み、Claude Code や Claude Desktop から検索・集計するツール。Amazon 公式の `Kindle.zip` を追加で取り込むと、ジャンル、シリーズ、Amazon 著者 ID も使える。
 
-- ローカル完結（外部 API への通信なし）
-- DuckDB の列指向エンジンで高速クエリ
-- Claude Desktop からは MCP サーバ（`mcp-server-motherduck`）経由で DB を直接参照
-- Claude Code 向け `SKILL.md` 同梱
+- ローカルで完結する(外部 API への通信なし)
+- Claude Code からは CLI(`kindb query`)で、Claude Desktop からは MCP サーバ(`mcp-server-motherduck`)で DB を問い合わせる
+- 問い合わせ方を Claude に教える Skill(`SKILL.md`)を同梱
 
 ## 使用データ
 
@@ -16,11 +15,11 @@ Chrome 拡張「[Kindle bookshelf exporter](https://chromewebstore.google.com/de
 - `acquiredTime`
 - `readStatus`
 - `asin`
-- `productImage`（任意）
+- `productImage`(任意)
 
-上記フォーマットに合う JSON を `kindb import` に渡す。
+Amazon のアカウントサービスから取得した公式 `Kindle.zip` は任意。`kindle.json` にないジャンル、シリーズ、Amazon 著者 ID、公式著者名を補う。
 
-任意で Amazon 公式のアカウントサービスから取得した `Kindle.zip` を `kindb import-official` に渡すと、`kindle.json` では取得できないジャンル、シリーズ、Amazon 著者 ID、公式著者名を別テーブルに取り込む。
+入力形式と検証規則の詳細は [`docs/spec.md`](docs/spec.md) を参照。
 
 ## インストール
 
@@ -42,204 +41,97 @@ uv を使わない場合は、任意の仮想環境で `pip install -e .` を実
 
 ## 使い方
 
-### データの取り込み
+DB は既定で `~/.kindb/kindle.duckdb` に作られる。各コマンドの `--db PATH` か、環境変数 `KINDB_DB_PATH` で変えられる。
+
+### 取り込み
 
 ```bash
-kindb import path/to/kindle.json
+kindb import path/to/kindle.json            # 初回も更新も同じ。毎回全件を置き換える
+kindb import-official path/to/Kindle.zip    # 任意。公式データを追加する
 ```
 
-DB 内の単一トランザクションで全件置換する。初回・更新とも同じコマンド。差分更新ではなく最新 JSON を毎回フルインポートする。失敗時は既存データが残る。
+どちらも 1 つのトランザクションで置き換えるので、失敗したときは取り込み前のデータが残る。2 つの取り込みは互いのデータに触れないため、`kindle.json` を取り込み直しても公式データは消えない。
 
-公式 `Kindle.zip` の追加取り込み:
+### 確認と検索
 
 ```bash
-kindb import-official path/to/Kindle.zip
+kindb status          # 取り込み日時、冊数、著者数、読了マーク別の冊数など
+kindb search 検索語    # 書名、著者、ASIN、読了マークの部分一致
+kindb authors         # 著者別の冊数
+kindb recent          # 最近ライブラリに入った本(既定 20 冊、-n で変更)
 ```
 
-zip 由来データは `book_genres` / `book_series` / `book_author_ids` / `book_author_names` に保存され、`kindle.json` の再 import では消えない。逆に `import-official` は `books` / `book_authors` には触れない。
-
-デフォルト DB パスは `~/.kindb/kindle.duckdb`。`--db PATH` で上書き可能。
-
-### DB 状態確認
-
-```bash
-kindb status
-```
-
-最終インポート日時、蔵書数、著者数、`read_status` 別内訳、画像 URL 保有冊数を表示する。公式 zip 取り込み済みの場合は、公式 import 日時、source path、ジャンル/シリーズ/著者 ID/著者名の行数も表示する。
-
-### 検索
-
-```bash
-kindb search ○○○
-```
-
-`v_books` に対し、書名・著者文字列・ASIN・読書状態を `ILIKE` で検索する。検索語中の `%` / `_` / `\` はリテラルとして扱う。
-
-### SQL クエリ
+### SQL で問い合わせる
 
 ```bash
 kindb query "SELECT count(*) AS n FROM v_books"
-kindb query "SELECT asin, title, authors_text, read_status, acquired_at FROM v_books ORDER BY acquired_at DESC, asin DESC LIMIT 50 OFFSET 0"
-kindb query --table "SELECT author_name, book_count FROM v_author_counts ORDER BY book_count DESC, author_name ASC LIMIT 10"
+kindb query --table "SELECT author_name, book_count FROM v_author_counts ORDER BY book_count DESC, author_name LIMIT 10"
 ```
 
-`SELECT` / `WITH` / `SHOW` / `DESCRIBE` / `EXPLAIN` / `PRAGMA` のみ実行できる読み取り専用接続。書き込み系 SQL は拒否される。
+読み取り専用で、`SELECT` / `WITH` / `SHOW` / `DESCRIBE` / `EXPLAIN` / `PRAGMA` の単一文だけを実行できる。出力は既定で JSON、`--table` で表になる。
 
-`SELECT` / `WITH` で行を返すクエリは、トップレベル末尾の `LIMIT` が必須。全件が必要な場合も、まず `count(*)` で総数を確認し、`LIMIT/OFFSET` でページングして取得する。例外的に制限なしで実行する場合のみ `--allow-unlimited` を明示する。
+行を返す `SELECT` / `WITH` には、末尾に `LIMIT` が必要(集計関数だけの SELECT は不要)。件数を数えてからページングで取得させるための制約で、意図して全件を取るときは `--allow-unlimited` を付ける。
 
-`ORDER BY` には一意なタイブレーカー(`v_books` は `asin`、`v_author_counts` は `author_name`)を必ず含める。主ソートに `DESC` を使うときはタイブレーカーも `DESC` で揃える。タイブレーカーがないと、同 `acquired_at` の行がページ境界をまたいだ際に `OFFSET` ページングで取りこぼし/重複が起こりうる。
+ビューの一覧と代表クエリは [`SKILL.md`](SKILL.md)、定義の詳細は [`docs/spec.md`](docs/spec.md) を参照。
 
-### 集計
-
-```bash
-kindb authors         # 著者別の所有冊数
-kindb recent          # 最近取得した本（デフォルト 20 冊）
-kindb recent -n 50    # 件数指定
-```
-
-### DB 削除
+### 削除
 
 ```bash
 kindb delete          # 確認あり
-kindb delete --yes    # 確認スキップ
+kindb delete --yes    # 確認なし
 ```
 
-## 主要ビュー
+## データの読み方
 
-通常は以下のビューを使う。テーブル定義の詳細は [`SKILL.md`](SKILL.md)、[`docs/spec.md`](docs/spec.md) を参照。
+- `read_status = 'READ'` は、Kindle で付けた読了マーク。`UNKNOWN` は読了マークがないことだけを表し、未読とは限らない。
+- `acquired_at` はライブラリに入った日時(UTC)。再ダウンロードなどで更新されるため、購入日とは限らない。
+- 発売日、出版社、価格、Kindle Unlimited かどうか、購入経路、マンガかどうかは保存しない。公式 zip に価格の列はあるが取り込まない。
 
-- `v_books`: 1 冊 1 行の主ビュー。分割済み著者配列、元の著者文字列、読書状態、表紙 URL、取得日時に加え、公式 zip 取り込み済みなら `genres`, `series_title`, `series_asin`, `series_position`, `author_ids`, `author_names_official` を含む。
-- `v_author_counts`: 著者別冊数。`book_count DESC, author_name ASC` で決定的に並ぶ。
-- `v_book_genres`: 本とジャンルの 1:N 展開。
-- `v_book_series`: シリーズ内の蔵書一覧。
-- `v_series_counts`: シリーズ別の所有冊数。
-- `v_genre_counts`: ジャンル別の所有冊数。
-- `v_author_id_counts`: Amazon 著者 ID ベースの著者別冊数。同名・別 ID の区別に使う。
-- `v_book_authors_official`: ASIN ごとの公式著者 ID と公式著者名の対応。
+## Claude から使う
 
-`v_author_counts` は `kindle.json` の著者名ベースで、zip 取り込みなしで使える。`v_author_id_counts` は zip 由来の Amazon 著者 ID ベースで、同名・別 ID を区別したい場合に使う。
+### Claude Code
 
-## 扱わない項目
-
-`kindle.json` からは確定できないため、kindb では保存せず、AI からの問い合わせでも断定しない。
-
-- 発売日、出版社、購入価格
-- Kindle Unlimited 判定、購入経路
-- マンガ / 固定レイアウト判定
-
-公式 zip には価格などの列が含まれることがあるが、v0.3 では取り込まない。
-
-`read_status = 'READ'` はユーザーが Kindle 上で付けた読了マークの自己申告フラグ。`UNKNOWN` は「読了マークなし」であり、未読とは断定しない。
-
-`acquired_at` はライブラリ取得日時であり、購入日とは限らない（再ダウンロード等で更新されうる）。
-
-## Claude Desktop MCP 設定
-
-[`mcp-server-motherduck`](https://github.com/motherduckdb/mcp-server-motherduck) を使うと Claude Desktop から kindb の DuckDB に直接クエリできる。
-
-Claude Desktop の設定ファイルに以下を追加する:
-
-```json
-{
-  "mcpServers": {
-    "kindb": {
-      "command": "uvx",
-      "args": [
-        "mcp-server-motherduck",
-        "--db-path",
-        "<HOME>/.kindb/kindle.duckdb"
-      ]
-    }
-  }
-}
-```
-
-`<HOME>` は自分のホームディレクトリの絶対パスに置き換える。DB への書き込みは `kindb import` に限定する。
-
-`mcp-server-motherduck` のデフォルト返却上限(1024 行 / 50000 文字)では Kindle 蔵書規模のリスト取得が頻繁に打ち切られる。蔵書ビューア用途では `--max-rows` / `--max-chars` を以下の推奨値まで引き上げた設定を使うとよい:
-
-```json
-{
-  "mcpServers": {
-    "kindb": {
-      "command": "uvx",
-      "args": [
-        "mcp-server-motherduck",
-        "--db-path",
-        "<HOME>/.kindb/kindle.duckdb",
-        "--max-rows",
-        "1000",
-        "--max-chars",
-        "150000"
-      ]
-    }
-  }
-}
-```
-
-上げすぎは LLM のコンテキストを圧迫するため、ユースケースに応じて調整する。なお `--max-rows` / `--max-chars` はあくまで返却時の打ち切り設定であり、ページングの代替ではない。
-
-### 会話冒頭プロンプト
-
-`SKILL.md` は Claude Code 向けに配布されるが、Claude Desktop には自動で届かないため、Claude Desktop から kindb を使う会話の冒頭に以下を貼り付けると LLM の挙動が安定する:
-
-```
-kindb (Kindle 蔵書 DB) を使う。
-- 通常は v_books を主に使う(集計は v_author_counts)。
-- ORDER BY には一意なタイブレーカー(v_books は asin、v_author_counts は author_name)を必ず含める。主ソートが DESC ならタイブレーカーも DESC で揃える。
-- 一覧取得は LIMIT/OFFSET でページングする。先に count(*) で総数を確認し、LIMIT N OFFSET M で反復取得する。--max-rows / --max-chars はページングの代替ではない。
-- product_image_url は出力サイズが大きいため、通常の一覧では選択せず、表紙画像が必要な詳細取得時だけ含める。
-- 公式 zip 取り込み済みなら v_genre_counts / v_series_counts / v_author_id_counts も使える。未取り込みかどうかは kindb status の Official import 行で確認する。
-```
-
-> 補足: 結果が途中で切れる場合は `LIMIT/OFFSET` で次のページを取得する。同じ本が複数回出る/抜ける場合は `ORDER BY` にタイブレーカー(`asin` 等)を必ず追加する。
-
-### MCP 経由の代表クエリ
-
-MCP 経由では `kindb query` CLI を通らないため、CLI の `LIMIT` 必須チェックは適用されない。Claude Desktop から一覧を取得するときも、まず総数を確認してからページングする。
-
-```sql
-SELECT count(*) AS n
-FROM v_books;
-
-SELECT asin, title, authors_text, read_status, acquired_at
-FROM v_books
-ORDER BY acquired_at DESC, asin DESC
-LIMIT 50 OFFSET 0;
-
-SELECT asin, title, authors_text, read_status, acquired_at
-FROM v_books
-ORDER BY acquired_at DESC, asin DESC
-LIMIT 50 OFFSET 50;
-
-SELECT asin, title, authors_text, read_status, product_image_url, acquired_at
-FROM v_books
-WHERE asin = 'B000000000';
-
-SELECT genre, book_count
-FROM v_genre_counts
-ORDER BY book_count DESC, genre ASC
-LIMIT 10;
-
-SELECT series_title, book_count
-FROM v_series_counts
-ORDER BY book_count DESC, series_title ASC
-LIMIT 10;
-```
-
-`product_image_url` は出力サイズが大きいため、通常の一覧では選択せず、表紙画像が必要な詳細取得時だけ含める。
-
-`LIMIT` を必須にした理由は [`docs/spec.md`](docs/spec.md) の「query の制約」を参照。
-
-## Claude Code からの利用（SKILL.md）
-
-`SKILL.md` を Claude Code の skills 配置場所にコピーすると、Claude Code が Kindle 蔵書関連の質問に対して `v_books` / `v_author_counts` を使った適切なクエリを自動生成できるようになる。
+`SKILL.md` を Skill として登録すると、蔵書について聞いたときに Claude Code が `kindb query` で問い合わせる。シンボリックリンクにしておくと、リポジトリの更新がそのまま反映される。リポジトリのルートで実行する。
 
 ```bash
 mkdir -p ~/.claude/skills/kindb
-cp SKILL.md ~/.claude/skills/kindb/SKILL.md
+ln -s "$(pwd)/SKILL.md" ~/.claude/skills/kindb/SKILL.md
 ```
+
+### Claude Desktop
+
+1. **MCP サーバを設定する。** Claude Desktop の設定ファイルに以下を追加する。`<HOME>` は自分のホームディレクトリの絶対パスに置き換える。
+
+   ```json
+   {
+     "mcpServers": {
+       "kindb": {
+         "command": "uvx",
+         "args": [
+           "mcp-server-motherduck",
+           "--db-path", "<HOME>/.kindb/kindle.duckdb",
+           "--max-rows", "1000",
+           "--max-chars", "150000"
+         ]
+       }
+     }
+   }
+   ```
+
+   `mcp-server-motherduck` は既定で読み取り専用で、問い合わせごとに接続を開き直す。このため Claude Desktop を起動したままでも `kindb import` を実行できる見込み(未検証)。`--max-rows` / `--max-chars` は結果を切り詰める上限で、既定の 1,024 行 / 50,000 文字から上げている。上げすぎると Claude のコンテキストを圧迫するので、用途に合わせて調整する。
+
+2. **Skill をアップロードする。** `SKILL.md` は MCP での使い方も含む。フォルダに入れて ZIP にし、Claude の Customize > Skills からアップロードする(Settings > Capabilities で Code execution を有効にしておく必要がある)。`SKILL.md` を更新したら ZIP を作り直してアップロードし直す。
+
+   ```bash
+   mkdir -p /tmp/kindb-skill/kindb && cp SKILL.md /tmp/kindb-skill/kindb/ \
+     && (cd /tmp/kindb-skill && zip -r kindb-skill.zip kindb)
+   ```
+
+   Skill を使えない環境では、会話の最初に次の文を貼る。
+
+   ```
+   kindb(Kindle 蔵書 DB)を使う。一覧は count(*) で総数を確かめてから LIMIT/OFFSET でページングし、ORDER BY の最後に asin などの一意な列を置く。read_status = 'UNKNOWN' は「読了マークが付いていない本」と表現する。
+   ```
 
 ## 開発
 
@@ -247,7 +139,7 @@ cp SKILL.md ~/.claude/skills/kindb/SKILL.md
 uv run ruff check . && uv run pytest
 ```
 
-テスト用の最小 `kindle.json` は `tests/create_fixture.py` が動的に生成する。
+テスト用の最小 `kindle.json` と `Kindle.zip` は `tests/create_fixture.py` と `tests/create_official_fixture.py` が動的に生成する。実機での確認手順は [`docs/manual-test-scenarios.md`](docs/manual-test-scenarios.md) にある。
 
 ### 依存更新の手順
 
@@ -270,7 +162,8 @@ uv lock --upgrade \
 ## 関連ドキュメント
 
 - [`docs/spec.md`](docs/spec.md): 現行仕様と設計判断
-- [`SKILL.md`](SKILL.md): 生成 AI 向けクエリガイド（代表クエリ集含む）
+- [`SKILL.md`](SKILL.md): Claude 向けの問い合わせ手順、ビュー、代表クエリ
+- [`docs/manual-test-scenarios.md`](docs/manual-test-scenarios.md): 実機での確認手順
 
 ## ライセンス
 
