@@ -220,7 +220,8 @@ def query(
             console.print(t)
         else:
             data = [dict(zip(columns, row)) for row in rows]
-            console.print(json.dumps(data, ensure_ascii=False, indent=2, default=str))
+            # rich を通すと端末幅で改行が入り JSON が壊れ、[bold] 等もマークアップとして消えるため素の stdout に書く
+            typer.echo(json.dumps(data, ensure_ascii=False, indent=2, default=str))
     finally:
         con.close()
 

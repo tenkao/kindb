@@ -134,6 +134,26 @@ def test_query_json(imported_db: Path) -> None:
     assert data[0]["n"] == 5
 
 
+def test_query_json_is_not_wrapped_or_markup_parsed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 狭い端末幅(パイプ出力時の既定 80 桁相当)でも JSON が壊れず、角括弧もマークアップとして消えないこと
+    monkeypatch.setenv("COLUMNS", "40")
+    title = "[bold]Markup[/bold] " + "long title " * 20
+    src = create_kindle_json(tmp_path / "long.json", [
+        {
+            "title": title,
+            "authors": "Author",
+            "acquiredTime": 1704067200000,
+            "readStatus": "UNKNOWN",
+            "asin": "B000LONG01",
+        }
+    ])
+    db = tmp_path / "long.duckdb"
+    import_kindle_json(src, db)
+    result = runner.invoke(app, ["query", "SELECT title FROM v_books LIMIT 1", "--db", str(db)])
+    assert result.exit_code == 0
+    assert json.loads(result.output)[0]["title"] == title
+
+
 def test_query_table(imported_db: Path) -> None:
     result = runner.invoke(
         app, ["query", "SELECT asin FROM books ORDER BY asin LIMIT 1", "--table", "--db", str(imported_db)]
