@@ -107,7 +107,7 @@ kindb delete --yes    # 確認スキップ
 
 ## 主要ビュー
 
-通常は以下のビューを使う。テーブル定義の詳細は [`SKILL.md`](SKILL.md)、[`docs/kindb-v0.2-plan.md`](docs/kindb-v0.2-plan.md)、[`docs/kindb-v0.3-plan.md`](docs/kindb-v0.3-plan.md) を参照。
+通常は以下のビューを使う。テーブル定義の詳細は [`SKILL.md`](SKILL.md)、[`docs/spec.md`](docs/spec.md) を参照。
 
 - `v_books`: 1 冊 1 行の主ビュー。分割済み著者配列、元の著者文字列、読書状態、表紙 URL、取得日時に加え、公式 zip 取り込み済みなら `genres`, `series_title`, `series_asin`, `series_position`, `author_ids`, `author_names_official` を含む。
 - `v_author_counts`: 著者別冊数。`book_count DESC, author_name ASC` で決定的に並ぶ。
@@ -230,7 +230,7 @@ LIMIT 10;
 
 `product_image_url` は出力サイズが大きいため、通常の一覧では選択せず、表紙画像が必要な詳細取得時だけ含める。
 
-MCP 経由で観測される具体的な失敗モード(打ち切り無視、ページ境界での取りこぼし/重複)とドキュメント整備方針は [`docs/kindb-query-pagination-plan.md`](docs/kindb-query-pagination-plan.md) を参照。
+`LIMIT` を必須にした理由は [`docs/spec.md`](docs/spec.md) の「query の制約」を参照。
 
 ## Claude Code からの利用（SKILL.md）
 
@@ -269,8 +269,7 @@ uv lock --upgrade \
 
 ## 関連ドキュメント
 
-- [`docs/kindb-v0.2-plan.md`](docs/kindb-v0.2-plan.md): v0.2 実装計画、スキーマ・スコープの公式記述
-- [`docs/kindb-v0.3-plan.md`](docs/kindb-v0.3-plan.md): 公式 Kindle.zip オプション取り込みの実装計画
+- [`docs/spec.md`](docs/spec.md): 現行仕様と設計判断
 - [`SKILL.md`](SKILL.md): 生成 AI 向けクエリガイド（代表クエリ集含む）
 
 ## ライセンス
