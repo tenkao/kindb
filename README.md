@@ -98,6 +98,16 @@ mkdir -p ~/.claude/skills/kindb
 ln -s "$(pwd)/SKILL.md" ~/.claude/skills/kindb/SKILL.md
 ```
 
+下の手順で Claude アプリにも Skill をアップロードすると、同じ Skill が Claude Code に `anthropic-skills:kindb` として同期され、ローカル版と二重に並ぶ。ローカル版だけを使うには、`~/.claude/settings.json` に次を加える(キーを `kindb` にすると両方が止まる)。
+
+```json
+{
+  "skillOverrides": {
+    "anthropic-skills:kindb": "off"
+  }
+}
+```
+
 ### Claude Desktop
 
 1. **MCP サーバを設定する。** Claude Desktop の設定ファイルに以下を追加する。`<HOME>` は自分のホームディレクトリの絶対パスに置き換える。サーバ名は `kindb` のままにする(`SKILL.md` がこの名前でサーバを見分けるため)。
