@@ -24,6 +24,7 @@ ls tests/fixtures/kindle.json
 ls /tmp/kindb_manual/Kindle.zip
 
 uv run ruff check . && uv run pytest -q
+kindb --help
 ```
 
 期待:
@@ -48,7 +49,7 @@ ls -la "$TEST_DB"*
 kindb import tests/fixtures/kindle.json --db "$TEST_DB"
 ```
 
-期待: エラーなく成功し、既存 DB が置換される。
+期待: エラーなく成功し、`books` が全件置き換わる。`import_metadata` は 1 行のまま増えない。
 
 異常系:
 
@@ -101,7 +102,9 @@ kindb status --db "$TEST_DB"
 - 空配列は `Import complete: 0 books` で成功する。
 - 異常系の後も `kindb status --db "$TEST_DB"` が成功し、既存 DB は無傷。
 
-WAL 除去:
+WAL の残留:
+
+import は `COMMIT` 後の `CHECKPOINT` で WAL を DB 本体に書き出す。壊れた WAL が置かれていても import が成功し、WAL が残らないことを確かめる。
 
 ```bash
 kindb import tests/fixtures/kindle.json --db "$TEST_DB"
@@ -230,9 +233,11 @@ kindb query "SELECT count(*) AS n FROM books" --db "$TEST_DB"
 
 ```bash
 kindb status --db "$TEST_DB"
+KINDB_DB_PATH="$TEST_DB" kindb status
 ```
 
 期待:
+- 2 つのコマンドが同じ DB の内容を表示する(`KINDB_DB_PATH` でも DB を指定できる)。
 - Books: 5
 - Authors: 分割後 unique 件数
 - `Read status: READ`, `Read status: READING`, `Read status: UNKNOWN`
@@ -274,6 +279,7 @@ kindb query --table "SELECT asin, title, read_status FROM v_books ORDER BY asin"
 kindb query --allow-unlimited --table "SELECT asin, title, read_status FROM v_books ORDER BY asin" --db "$TEST_DB"
 kindb query "DELETE FROM books" --db "$TEST_DB"; echo "exit=$?"
 kindb query "SELECT 1; UPDATE books SET title='hacked' WHERE asin='B000TEST01'" --db "$TEST_DB"; echo "exit=$?"
+kindb query "SELECT repeat('長い書名', 40) || ' [bold]x[/bold]' AS t LIMIT 1" --db "$TEST_DB" | python3 -m json.tool
 ```
 
 期待:
@@ -281,6 +287,7 @@ kindb query "SELECT 1; UPDATE books SET title='hacked' WHERE asin='B000TEST01'" 
 - 行返却 SELECT は `LIMIT` なしでは拒否されて `exit=1` になり、`--allow-unlimited` 付きなら実行できる。
 - 書き込み系 SQL は拒否される。
 - 先頭 SELECT の複文書き込みも単一文チェックで拒否されて `exit=1` になり、DB は変わらない。
+- パイプに流した JSON が `json.tool` で読め、値の末尾に `[bold]x[/bold]` がそのまま残る(端末幅での改行やマークアップ解釈が入らない)。
 
 ## 5. authors
 
