@@ -10,6 +10,9 @@ build/
 .venv/
 venv/
 
+# uv tool install 用に uv.lock から毎回生成する(内容は tool のレシートに保存される)
+constraints.txt
+
 # DuckDB
 *.duckdb
 *.duckdb.wal
