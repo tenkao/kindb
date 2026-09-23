@@ -24,6 +24,7 @@ uv run kindb <subcommand>
 # Global command (editable; rerun after dependency changes or moving the project)
 # uv tool install ignores uv.lock, so pin versions via constraints exported from it.
 # Never use `uv tool upgrade kindb`: it keeps the constraints stored at install time.
+# --python is required: uv tool install does not read the project's .python-version.
 # Dependency update procedure: see README.md「依存更新の手順」
 uv export --locked --no-dev --no-emit-project --no-hashes --no-annotate --format requirements.txt -o constraints.txt \
   && uv tool install --editable . --reinstall --python 3.13 --constraints constraints.txt
