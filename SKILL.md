@@ -129,14 +129,18 @@ ORDER BY year
 LIMIT 100;
 ```
 
-ジャンル別とシリーズ別の冊数:
+ジャンル別の冊数:
 
 ```sql
 SELECT genre, book_count
 FROM v_genre_counts
 ORDER BY book_count DESC, genre
 LIMIT 10;
+```
 
+シリーズ別の冊数:
+
+```sql
 SELECT series_title, book_count
 FROM v_series_counts
 ORDER BY book_count DESC, series_title, series_asin
@@ -164,14 +168,18 @@ ORDER BY g.genre, b.read_status
 LIMIT 100;
 ```
 
-同名で別人の著者を区別した冊数と、特定の著者 ID の本:
+同名で別人の著者を区別した冊数:
 
 ```sql
 SELECT author_id, author_name, book_count
 FROM v_author_id_counts
 ORDER BY book_count DESC, author_name, author_id
 LIMIT 10;
+```
 
+特定の著者 ID の本(著者 ID は上のクエリで調べる):
+
+```sql
 SELECT b.asin, b.title, b.acquired_at
 FROM v_books b
 JOIN v_book_authors_official a ON a.asin = b.asin
