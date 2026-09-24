@@ -129,7 +129,8 @@ def test_import_official_zip_header_mismatch_preserves_existing(imported_db: Pat
             else:
                 dest.writestr(name, source.read(name))
 
-    with pytest.raises(ValueError, match="Genre"):
+    # "Genre" だけだと、エラーに含まれる CSV のパス(CustomerGenres_FE)にも一致する
+    with pytest.raises(ValueError, match="missing Genre; actual columns: ASIN, Bad"):
         import_official_zip(broken, imported_db)
     assert _official_counts(imported_db) == before
 
@@ -177,7 +178,7 @@ def test_genre_and_series_views_count_library_books(imported_db: Path, tmp_path:
     finally:
         con.close()
 
-    # 削除済みの本と、zip にしかない本は数えない
+    # zip にしかない本(B000ZIP001)は数えない
     assert genre_counts == [("Fiction", 2), ("Fantasy", 1)]
     assert series_counts == [("B07D4FP6XQ", "Series Alpha", 1), (None, "Series Without Asin", 1)]
     assert book_series == [

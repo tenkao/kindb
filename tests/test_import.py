@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import os
-import time
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 
@@ -41,7 +41,11 @@ def test_import_atomic_replace_swaps_content(tmp_path: Path) -> None:
         _book("B000AAA01", "First Import A"),
         _book("B000AAA02", "First Import B"),
     ])
-    json_b = create_kindle_json(tmp_path / "b.json", [_book("B000BBB01", "Second Import Only")])
+    # 取り込み直しでは同じ ASIN が再び入る。同じトランザクションで DELETE したキーを INSERT できること
+    json_b = create_kindle_json(tmp_path / "b.json", [
+        _book("B000AAA01", "Renamed A"),
+        _book("B000BBB01", "Second Import Only"),
+    ])
     db = tmp_path / "db.duckdb"
 
     import_kindle_json(json_a, db)
@@ -49,8 +53,8 @@ def test_import_atomic_replace_swaps_content(tmp_path: Path) -> None:
 
     con = connect(db, read_only=True)
     try:
-        asins = [r[0] for r in con.execute("SELECT asin FROM books ORDER BY asin").fetchall()]
-        assert asins == ["B000BBB01"]
+        rows = con.execute("SELECT asin, title FROM books ORDER BY asin").fetchall()
+        assert rows == [("B000AAA01", "Renamed A"), ("B000BBB01", "Second Import Only")]
         assert con.execute("SELECT source_path FROM import_metadata").fetchone()[0] == str(json_b.resolve())
         assert con.execute("SELECT count(*) FROM import_metadata").fetchone()[0] == 1
     finally:
@@ -155,28 +159,27 @@ def test_product_image_missing_null_and_empty_are_stored_as_null(imported_db: Pa
         con.close()
 
 
-@pytest.fixture
-def non_utc_timezone() -> Iterator[None]:
-    # 実行環境が UTC だと、ローカル時刻で解釈するバグを見逃すため
-    original = os.environ.get("TZ")
-    os.environ["TZ"] = "Asia/Tokyo"
-    time.tzset()
-    yield
-    if original is None:
-        os.environ.pop("TZ", None)
-    else:
-        os.environ["TZ"] = original
-    time.tzset()
-
-
-@pytest.mark.usefixtures("non_utc_timezone")
 def test_acquired_time_is_stored_as_utc(tmp_path: Path) -> None:
+    # 実行環境が UTC だと、ローカル時刻で解釈するバグや tz 付きの値を DuckDB に渡すバグを見逃すため、
+    # UTC 以外の TZ で起動した別プロセスで取り込む。
+    # 試したが不可: os.environ["TZ"] と time.tzset() で切り替える方法。DuckDB のセッションの TZ は
+    # duckdb の import 時に決まり、後から変えても UTC のままなので、tz 付きの値を渡すバグを見逃す
     json_path = create_kindle_json(tmp_path / "time.json", [
         _book("B000TIME0", "Epoch", acquiredTime=0),
         _book("B000TIME1", "Millis", acquiredTime=1775589770148),
     ])
     db = tmp_path / "time.duckdb"
-    import_kindle_json(json_path, db)
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from kindb.importer import import_kindle_json; import_kindle_json(sys.argv[1], sys.argv[2])",
+            str(json_path),
+            str(db),
+        ],
+        env={**os.environ, "TZ": "Asia/Tokyo"},
+        check=True,
+    )
 
     con = connect(db, read_only=True)
     try:

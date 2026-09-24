@@ -61,11 +61,12 @@ def test_import_unknown_key_warns_on_stderr(tmp_path: Path) -> None:
 
 
 def test_status_without_db_guides_to_import_and_creates_nothing(tmp_path: Path) -> None:
-    db = tmp_path / "nope.duckdb"
-    result = runner.invoke(app, ["status", "--db", str(db)])
+    # 既定の ~/.kindb もまだない状態を想定し、親ディレクトリも作らないことを確かめる
+    db_dir = tmp_path / "kindb"
+    result = runner.invoke(app, ["status", "--db", str(db_dir / "nope.duckdb")])
     assert result.exit_code == 1
     assert "No database found" in result.stderr
-    assert not db.exists()
+    assert not db_dir.exists()
 
 
 def test_status_with_db(imported_db: Path) -> None:
