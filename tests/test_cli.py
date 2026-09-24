@@ -102,7 +102,12 @@ def _another_process_connected(db_path: Path, *, read_only: bool) -> Iterator[No
         assert holder.stdout.readline().strip() == "ready"
         yield
     finally:
-        holder.communicate(input="")
+        # 別プロセスが止まってもテストが終わらなくならないよう、待ち時間に上限を置く
+        try:
+            holder.communicate(input="", timeout=30)
+        except subprocess.TimeoutExpired:
+            holder.kill()
+            raise
 
 
 def test_read_command_runs_while_another_process_reads(imported_db: Path) -> None:
@@ -123,13 +128,21 @@ def test_read_command_runs_while_another_process_reads(imported_db: Path) -> Non
     ids=["import-while-reading", "search-while-writing"],
 )
 def test_lock_conflict_is_reported_in_one_line(
-    imported_db: Path, kindle_json: Path, holder_read_only: bool, args: list[str]
+    imported_db: Path,
+    kindle_json: Path,
+    holder_read_only: bool,
+    args: list[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # パスより狭い端末幅でも、案内が折り返されず 1 行に収まること
+    monkeypatch.setenv("COLUMNS", "40")
     argv = [str(kindle_json) if a == "KINDLE_JSON" else a for a in args]
     with _another_process_connected(imported_db, read_only=holder_read_only):
         result = runner.invoke(app, [*argv, "--db", str(imported_db)])
     assert result.exit_code == 1
-    assert "Database is in use by another process" in result.stderr
+    assert result.stderr.startswith("Error: Database is in use by another process: ")
+    assert result.stderr.count("\n") == 1
+    assert str(imported_db) in result.stderr
     assert result.exception is None or isinstance(result.exception, SystemExit)
     assert _title(imported_db, "B000TEST01") == "テストの本"
 

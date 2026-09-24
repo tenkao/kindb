@@ -17,7 +17,8 @@ from kindb.importer import import_kindle_json, import_official_zip
 
 app = typer.Typer(help="Kindle library manager powered by DuckDB.")
 console = Console()
-err_console = Console(stderr=True)
+# エラーは 1 行で読めるよう端末幅で折り返さない。折り返すとパスの途中に改行が入り、grep や AI の読み取りで切れる
+err_console = Console(stderr=True, soft_wrap=True)
 
 
 def _report_locked_db(func: Callable[..., None]) -> Callable[..., None]:

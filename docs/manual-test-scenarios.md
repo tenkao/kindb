@@ -275,6 +275,27 @@ kindb search "A\\B" --db "$TEST_DB"
 
 期待: `%`, `_`, `\` は ILIKE ワイルドカードではなく文字として扱われる。
 
+パイプ出力(Claude Code の Bash と同じ 80 桁)での長い書名:
+
+```bash
+uv run python - <<'PY'
+import json
+from pathlib import Path
+Path("/tmp/kindb_manual/long_title.json").write_text(json.dumps([{
+  "title": "ソフトウェアアーキテクチャの基礎 ―エンジニアリングに基づく体系的アプローチ",
+  "authors": "Author",
+  "acquiredTime": 1704067200000,
+  "readStatus": "UNKNOWN",
+  "asin": "B000LONG01"
+}], ensure_ascii=False), encoding="utf-8")
+PY
+kindb import /tmp/kindb_manual/long_title.json --db /tmp/kindb_manual/long_title.duckdb
+env -u COLUMNS kindb search ソフトウェア --db /tmp/kindb_manual/long_title.duckdb | cat
+env -u COLUMNS kindb recent --db /tmp/kindb_manual/long_title.duckdb | cat
+```
+
+期待: 書名が `…` で切れず、Title 列の中で複数行に折り返されて全文が表示される。
+
 ## 4. query
 
 ```bash
@@ -286,8 +307,10 @@ kindb query "DELETE FROM books" --db "$TEST_DB"; echo "exit=$?"
 kindb query "SELECT 1; UPDATE books SET title='hacked' WHERE asin='B000TEST01'" --db "$TEST_DB"; echo "exit=$?"
 kindb query "SELECT repeat('長い書名', 40) || ' [bold]x[/bold]' AS t LIMIT 1" --db "$TEST_DB" | python3 -m json.tool
 for i in 1 2 3 4; do (kindb query "SELECT count(*) AS n FROM v_books" --db "$TEST_DB" > /dev/null; echo "parallel$i exit=$?") & done; wait
-(uv run python -c "import duckdb, sys, time; c = duckdb.connect(sys.argv[1], read_only=True); time.sleep(5)" "$TEST_DB" &); sleep 2
-kindb import tests/fixtures/kindle.json --db "$TEST_DB"; echo "exit=$?"
+rm -f /tmp/kindb_manual/ready
+(uv run python -c "import duckdb, pathlib, sys, time; c = duckdb.connect(sys.argv[1], read_only=True); pathlib.Path(sys.argv[2]).touch(); time.sleep(10)" "$TEST_DB" /tmp/kindb_manual/ready &)
+while [ ! -f /tmp/kindb_manual/ready ]; do sleep 0.1; done
+env -u COLUMNS kindb import tests/fixtures/kindle.json --db "$TEST_DB"; echo "exit=$?"
 ```
 
 期待:

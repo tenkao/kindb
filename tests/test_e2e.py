@@ -40,7 +40,11 @@ class KindbSession:
 
     def run(self, *args: str | Path, input: str | None = None) -> subprocess.CompletedProcess[str]:
         argv = [str(KINDB), *map(str, args), "--db", str(self.db)]
-        proc = subprocess.run(argv, input=input, capture_output=True, text=True, env=self.env, timeout=60)
+        # rich は stdin の端末幅も見るので、pytest -s を端末で動かしても幅が変わらないよう stdin を切り離す
+        stdin = subprocess.DEVNULL if input is None else None
+        proc = subprocess.run(
+            argv, input=input, stdin=stdin, capture_output=True, text=True, env=self.env, timeout=60
+        )
         self.records.append(
             {
                 "argv": ["kindb", *(self._mask(a) for a in argv[1:])],
@@ -163,6 +167,8 @@ def _column_text(table_output: str, column: int) -> str:
 
 
 def test_bad_inputs_and_unsafe_queries_leave_library_intact(kindb: KindbSession, tmp_path: Path) -> None:
+    # エラーは Claude Code の Bash と同じ既定の幅(80 桁)でも 1 行で出ること
+    kindb.env.pop("COLUMNS")
     kindle_zip = create_official_zip(tmp_path / "Kindle.zip")
     assert kindb.run("import", create_kindle_json(tmp_path / "kindle.json")).returncode == 0
     assert kindb.run("import-official", kindle_zip).returncode == 0
@@ -193,6 +199,7 @@ def test_bad_inputs_and_unsafe_queries_leave_library_intact(kindb: KindbSession,
     assert broken.returncode == 1
     # "Genre" だけだと、エラーに含まれる CSV のパス(CustomerGenres_FE)にも一致する
     assert "missing Genre" in broken.stderr
+    assert broken.stderr.count("\n") == 1
 
     for sql, message in [
         ("DELETE FROM books", "Only SELECT"),
