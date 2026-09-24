@@ -115,21 +115,7 @@ def test_import_official_zip_missing_required_file_errors(tmp_path: Path) -> Non
         import_official_zip(zip_path, tmp_path / "db.duckdb")
 
 
-def test_import_official_zip_header_mismatch_errors(tmp_path: Path) -> None:
-    zip_path = create_official_zip(tmp_path / "Kindle.zip")
-    broken = tmp_path / "Broken.zip"
-    with zipfile.ZipFile(zip_path) as source, zipfile.ZipFile(broken, "w") as dest:
-        for name in source.namelist():
-            if "CustomerGenres_FE" in name:
-                dest.writestr(name, "ASIN,Bad\nB000TEST01,Fiction\n")
-            else:
-                dest.writestr(name, source.read(name))
-
-    with pytest.raises(ValueError, match="Genre"):
-        import_official_zip(broken, tmp_path / "db.duckdb")
-
-
-def test_import_official_zip_failure_preserves_existing(imported_db: Path, tmp_path: Path) -> None:
+def test_import_official_zip_header_mismatch_preserves_existing(imported_db: Path, tmp_path: Path) -> None:
     good = create_official_zip(tmp_path / "Kindle.zip")
     import_official_zip(good, imported_db)
     before = _official_counts(imported_db)
@@ -142,7 +128,7 @@ def test_import_official_zip_failure_preserves_existing(imported_db: Path, tmp_p
             else:
                 dest.writestr(name, source.read(name))
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Genre"):
         import_official_zip(broken, imported_db)
     assert _official_counts(imported_db) == before
 

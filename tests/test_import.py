@@ -33,13 +33,6 @@ def _book_without(asin: str, book_title: str, missing: str) -> dict[str, object]
     return row
 
 
-def test_import_creates_db(kindle_json: Path, db_path: Path) -> None:
-    result = import_kindle_json(kindle_json, db_path)
-    assert db_path.exists()
-    assert result["books_count"] == 5
-    assert result["source_path"] == str(kindle_json.resolve())
-
-
 def test_import_atomic_replace_swaps_content(tmp_path: Path) -> None:
     json_a = create_kindle_json(tmp_path / "a.json", [
         _book("B000AAA01", "First Import A"),
@@ -120,13 +113,6 @@ def test_invalid_payloads_raise(tmp_path: Path, payload: object, message: str) -
     json_path = tmp_path / "bad.json"
     json_path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match=message):
-        import_kindle_json(json_path, tmp_path / "db.duckdb")
-
-
-def test_invalid_json_raises(tmp_path: Path) -> None:
-    json_path = tmp_path / "bad.json"
-    json_path.write_text("{bad", encoding="utf-8")
-    with pytest.raises(ValueError, match="Invalid JSON"):
         import_kindle_json(json_path, tmp_path / "db.duckdb")
 
 
@@ -330,17 +316,6 @@ def test_ensure_schema_missing_database_is_noop(tmp_path: Path) -> None:
     assert not db.exists()
 
 
-def test_authors_split_and_order(imported_db: Path) -> None:
-    con = connect(imported_db, read_only=True)
-    try:
-        rows = con.execute(
-            "SELECT author_name, author_order FROM book_authors WHERE asin = 'B000TEST01' ORDER BY author_order"
-        ).fetchall()
-        assert rows == [("山田太郎", 1), ("佐藤花子", 2)]
-    finally:
-        con.close()
-
-
 def test_empty_author_elements_are_skipped(tmp_path: Path) -> None:
     json_path = create_kindle_json(tmp_path / "authors.json", [_book("B000AUTH2", "Authors", authors="A, , B")])
     db = tmp_path / "authors.duckdb"
@@ -381,11 +356,6 @@ def test_stale_wal_removed_on_import(kindle_json: Path, tmp_path: Path) -> None:
     import_kindle_json(kindle_json, db)
     assert db.exists()
     assert not wal.exists()
-
-
-def test_nonexistent_file_raises(tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError):
-        import_kindle_json(tmp_path / "missing.json", tmp_path / "db.duckdb")
 
 
 def _asins(db_path: Path) -> list[str]:

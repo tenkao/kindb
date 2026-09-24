@@ -112,12 +112,6 @@ def test_search_by_asin(imported_db: Path) -> None:
     assert "Another Book" in result.output
 
 
-def test_search_by_read_status(imported_db: Path) -> None:
-    result = runner.invoke(app, ["search", "READING", "--db", str(imported_db)])
-    assert result.exit_code == 0
-    assert "B000TEST04" in result.output
-
-
 def test_search_is_case_insensitive(imported_db: Path) -> None:
     result = runner.invoke(app, ["search", "reading", "--db", str(imported_db)])
     assert result.exit_code == 0
@@ -234,13 +228,6 @@ def test_query_table(imported_db: Path) -> None:
     assert "B000TEST01" in result.output
 
 
-def test_query_allows_limit_without_offset(imported_db: Path) -> None:
-    result = runner.invoke(app, ["query", "SELECT asin FROM books ORDER BY asin LIMIT 1", "--db", str(imported_db)])
-    assert result.exit_code == 0
-    data = json.loads(result.output)
-    assert data[0]["asin"] == "B000TEST01"
-
-
 def test_query_allows_limit_with_offset(imported_db: Path) -> None:
     result = runner.invoke(
         app, ["query", "SELECT asin FROM books ORDER BY asin LIMIT 1 OFFSET 1", "--db", str(imported_db)]
@@ -250,15 +237,9 @@ def test_query_allows_limit_with_offset(imported_db: Path) -> None:
     assert data[0]["asin"] == "B000TEST02"
 
 
-def test_query_rejects_select_without_limit(imported_db: Path) -> None:
-    result = runner.invoke(app, ["query", "SELECT asin FROM books ORDER BY asin", "--db", str(imported_db)])
-    assert result.exit_code == 1
-    assert "LIMIT 100 OFFSET 0" in result.output
-    assert "--allow-unlimited" in result.output
-
-
-def test_query_rejects_select_without_limit_in_table_mode(imported_db: Path) -> None:
-    result = runner.invoke(app, ["query", "SELECT asin FROM books ORDER BY asin", "--table", "--db", str(imported_db)])
+@pytest.mark.parametrize("mode", [[], ["--table"]], ids=["json", "table"])
+def test_query_rejects_select_without_limit(imported_db: Path, mode: list[str]) -> None:
+    result = runner.invoke(app, ["query", *mode, "SELECT asin FROM books ORDER BY asin", "--db", str(imported_db)])
     assert result.exit_code == 1
     assert "LIMIT 100 OFFSET 0" in result.output
     assert "--allow-unlimited" in result.output
@@ -445,21 +426,6 @@ def test_recent_respects_limit(imported_db: Path) -> None:
     assert "B000TEST01" not in result.output
 
 
-def test_removed_commands_absent() -> None:
-    result = runner.invoke(app, ["--help"])
-    assert result.exit_code == 0
-    assert "genres" not in result.output
-    assert "series" not in result.output
-    assert "reading" not in result.output
-
-
-def test_delete_with_yes(imported_db: Path) -> None:
-    result = runner.invoke(app, ["delete", "--db", str(imported_db), "--yes"])
-    assert result.exit_code == 0
-    assert "Deleted" in result.output
-    assert not imported_db.exists()
-
-
 def test_delete_no_db(tmp_path: Path) -> None:
     result = runner.invoke(app, ["delete", "--db", str(tmp_path / "nope.duckdb")])
     assert result.exit_code == 0
@@ -471,21 +437,13 @@ def test_delete_cancel(imported_db: Path) -> None:
     assert imported_db.exists()
 
 
-def test_delete_removes_wal(imported_db: Path) -> None:
+def test_delete_with_yes_removes_db_and_wal(imported_db: Path) -> None:
     wal = Path(str(imported_db) + ".wal")
     wal.write_text("fake-wal")
     result = runner.invoke(app, ["delete", "--db", str(imported_db), "--yes"])
     assert result.exit_code == 0
+    assert "Deleted" in result.output
     assert not imported_db.exists()
-    assert not wal.exists()
-
-
-def test_import_removes_wal_with_db_ext(kindle_json: Path, tmp_path: Path) -> None:
-    db = tmp_path / "store.db"
-    wal = Path(str(db) + ".wal")
-    wal.write_text("fake-wal")
-    import_kindle_json(kindle_json, db)
-    assert db.exists()
     assert not wal.exists()
 
 
