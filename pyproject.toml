@@ -8,7 +8,8 @@ version = "0.3.0"
 description = "Import Kindle library JSON and optional official Kindle.zip metadata into DuckDB"
 requires-python = ">=3.10"
 dependencies = [
-    "duckdb>=1.0",
+    # 1.1 以前は同じトランザクションで DELETE したキーを INSERT すると主キー違反になり、取り込み直しが失敗する
+    "duckdb>=1.2",
     "typer>=0.12",
     "rich>=13.0",
 ]
