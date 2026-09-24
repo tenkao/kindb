@@ -36,6 +36,12 @@ def _print_shown_total(shown: int, total: int, noun: str) -> None:
     console.print(message)
 
 
+def _add_column(table: Table, name: str, **kwargs: object) -> None:
+    # rich の既定は単語で折り返し、収まらない語を「…」で切る。空白のない日本語の書名は丸ごと 1 語になり、
+    # Claude Code の Bash(COLUMNS を子プロセスに渡さず、パイプなので 80 桁)では途中で切れるため、文字単位で折り返す
+    table.add_column(name, overflow="fold", **kwargs)
+
+
 def _escape_like(term: str) -> str:
     return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
@@ -114,8 +120,8 @@ def status(db: Optional[str] = _db_option()) -> None:
         ).fetchone()
 
         table = Table(title="kindb status")
-        table.add_column("Item", style="bold")
-        table.add_column("Value")
+        _add_column(table, "Item", style="bold")
+        _add_column(table, "Value")
         if meta:
             table.add_row("Last import", str(meta[3]))
             table.add_row("Source", meta[0])
@@ -170,11 +176,11 @@ def search(
         rows = con.execute(sql, params).fetchall()
 
         table = Table(title=f"Search: {term}")
-        table.add_column("ASIN", style="dim")
-        table.add_column("Title")
-        table.add_column("Authors")
-        table.add_column("Status")
-        table.add_column("Acquired")
+        _add_column(table, "ASIN", style="dim")
+        _add_column(table, "Title")
+        _add_column(table, "Authors")
+        _add_column(table, "Status")
+        _add_column(table, "Acquired")
         for row in rows:
             table.add_row(row[0], row[1], _format_value(row[2]), row[3], _format_value(row[4]))
         console.print(table)
@@ -231,7 +237,7 @@ def query(
         if table:
             t = Table()
             for col in columns:
-                t.add_column(col)
+                _add_column(t, col)
             for row in rows:
                 t.add_row(*[_format_value(v) for v in row])
             console.print(t)
@@ -490,7 +496,7 @@ def _run_table_query(
 
         table = Table(title=title)
         for name, justify in columns:
-            table.add_column(name, justify=justify)
+            _add_column(table, name, justify=justify)
         for row in rows:
             table.add_row(*[_format_value(v) for v in row])
         console.print(table)

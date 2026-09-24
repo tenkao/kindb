@@ -134,6 +134,34 @@ def test_library_lifecycle(kindb: KindbSession, tmp_path: Path) -> None:
     assert "No database found" in after_delete.stderr
 
 
+def test_tables_keep_long_japanese_titles_at_claude_code_width(kindb: KindbSession, tmp_path: Path) -> None:
+    # Claude Code の Bash は COLUMNS を子プロセスに渡さず、出力はパイプなので rich は 80 桁で表を組む。
+    # その幅でも、空白のない日本語の書名を「…」で切らないこと
+    kindb.env.pop("COLUMNS")
+    title = "ソフトウェアアーキテクチャの基礎 ―エンジニアリングに基づく体系的アプローチ"
+    book = {"title": title, "authors": "Mark Richards, Neal Ford, 島田浩二", "acquiredTime": 1704067200000,
+            "readStatus": "UNKNOWN", "asin": "B08TWRWZFL", "productImage": "https://images.example.com/B08TWRWZFL.jpg"}
+    assert kindb.run("import", create_kindle_json(tmp_path / "kindle.json", [book])).returncode == 0
+
+    for args in [
+        ("search", "ソフトウェア"),
+        ("recent",),
+        ("query", "--table", "SELECT asin, title, authors_text FROM v_books LIMIT 1"),
+    ]:
+        shown = kindb.run(*args)
+        assert shown.returncode == 0, shown.stderr
+        assert "…" not in shown.stdout, args
+        assert "B08TWRWZFL" in shown.stdout, args
+        # 折り返された書名の列の断片をつなぐと、書名の全文になる
+        assert _column_text(shown.stdout, 1) == title.replace(" ", ""), args
+
+
+def _column_text(table_output: str, column: int) -> str:
+    """1 行だけの表から、折り返された列の断片を空白を除いてつなぐ。"""
+    body = [line.split("│") for line in table_output.splitlines() if line.startswith("│")]
+    return "".join(cells[column + 1].replace(" ", "") for cells in body)
+
+
 def test_bad_inputs_and_unsafe_queries_leave_library_intact(kindb: KindbSession, tmp_path: Path) -> None:
     kindle_zip = create_official_zip(tmp_path / "Kindle.zip")
     assert kindb.run("import", create_kindle_json(tmp_path / "kindle.json")).returncode == 0
