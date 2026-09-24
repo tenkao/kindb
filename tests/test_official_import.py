@@ -166,7 +166,8 @@ def test_genre_and_series_views_count_library_books(imported_db: Path, tmp_path:
     try:
         # PRIMARY 以外の所属は v_book_series には出るが、シリーズ別の冊数には数えない
         con.execute(
-            "INSERT INTO book_series VALUES ('B000TEST03', 'B07D4FP6XQ', 'Series Alpha', NULL, NULL, 2, 'OTHER')"
+            """INSERT INTO book_series (asin, series_asin, series_title, position_in_collection, relation_type)
+               VALUES ('B000TEST03', 'B07D4FP6XQ', 'Series Alpha', 2, 'OTHER')"""
         )
         genre_counts = con.execute(
             "SELECT genre, book_count FROM v_genre_counts ORDER BY book_count DESC, genre"
@@ -210,9 +211,11 @@ def test_v_author_id_counts_prefers_known_name_over_missing(imported_db: Path) -
     con = connect(imported_db)
     try:
         for asin in ("B000TEST01", "B000TEST02", "B000TEST03"):
-            con.execute("INSERT INTO book_author_ids VALUES (?, 'AUTH1', 1)", [asin])
-        con.execute("INSERT INTO book_author_names VALUES ('B000TEST01', '山田太郎', 1)")
-        con.execute("INSERT INTO book_author_ids VALUES ('B000TEST04', 'AUTH2', 1)")
+            con.execute("INSERT INTO book_author_ids (asin, author_id, author_order) VALUES (?, 'AUTH1', 1)", [asin])
+        con.execute(
+            "INSERT INTO book_author_names (asin, author_name, author_order) VALUES ('B000TEST01', '山田太郎', 1)"
+        )
+        con.execute("INSERT INTO book_author_ids (asin, author_id, author_order) VALUES ('B000TEST04', 'AUTH2', 1)")
         rows = con.execute(
             "SELECT author_id, author_name, book_count FROM v_author_id_counts ORDER BY author_id"
         ).fetchall()
