@@ -51,7 +51,7 @@ kindb の現行仕様と、その設計判断の理由をまとめる。DDL と�
 | `CustomerAuthorIdRelationship_FE` | `ASIN`, `Author ID` | `book_author_ids` |
 | `CustomerAuthorNameRelationship_FE` | `ASIN`, `Author Name` | `book_author_names` |
 
-必須列が欠けたヘッダはエラーにし、不足列と実際の列名をメッセージに含める。
+必須列が欠けたヘッダはエラーにし、不足列と実際の列名をメッセージに含める。CSV は zip 内のパスで示す。展開先の一時ディレクトリはエラーを表示する時点で消えているため。
 
 変換規則:
 

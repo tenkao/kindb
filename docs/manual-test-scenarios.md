@@ -210,7 +210,7 @@ kindb query "SELECT count(*) AS n FROM book_genres" --db "$TEST_DB"
 
 期待:
 - `exit=1`
-- エラーメッセージに `Genre` が含まれる。
+- エラーメッセージに `missing Genre` と、zip 内のパス `Kindle.UnifiedLibraryIndex/datasets/Kindle.UnifiedLibraryIndex.CustomerGenres_FE/part-000.csv` が含まれる(展開先の一時ディレクトリのパスは出ない)。
 - `book_genres` は壊れず 4 行のまま。
 
 import の独立性:

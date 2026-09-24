@@ -14,7 +14,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, Iterator
@@ -25,8 +24,6 @@ from tests.create_fixture import create_kindle_json
 from tests.create_official_fixture import create_official_zip
 
 KINDB = Path(sys.executable).parent / "kindb"
-# import-official は zip を tempfile の一時ディレクトリに展開し、エラーにそのパスが出る
-_EXTRACT_DIR = re.compile(re.escape(tempfile.gettempdir()) + r"/tmp\w+")
 _IMPORT_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+")
 
 
@@ -60,7 +57,7 @@ class KindbSession:
         return json.loads(proc.stdout)
 
     def _mask(self, text: str) -> str:
-        text = _EXTRACT_DIR.sub("<extract>", text.replace(str(self.tmp_path), "<tmp>"))
+        text = text.replace(str(self.tmp_path), "<tmp>")
         text = _IMPORT_TIMESTAMP.sub("<imported_at>", text)
         # 表の幅は一時パスの長さで変わる
         return re.sub(r" {2,}", " ", re.sub(r"([━─])[━─]+", r"\1", text))

@@ -243,14 +243,15 @@ def _official_files(root: Path) -> dict[str, list[Path]]:
     return files
 
 
-def _read_csv_rows(path: Path, required_columns: set[str]) -> list[dict[str, str]]:
+def _read_csv_rows(path: Path, required_columns: set[str], root: Path) -> list[dict[str, str]]:
     with path.open(encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames or []
         missing = sorted(required_columns - set(fieldnames))
         if missing:
+            # 展開先の一時ディレクトリはエラー表示の時点で消えているので、zip 内のパスで示す
             raise ValueError(
-                f"CSV header mismatch in {path}: missing {', '.join(missing)}; "
+                f"CSV header mismatch in {path.relative_to(root).as_posix()}: missing {', '.join(missing)}; "
                 f"actual columns: {', '.join(fieldnames)}"
             )
         return list(reader)
@@ -294,22 +295,22 @@ def _parse_position(value: str | None) -> int | None:
         return None
 
 
-def _deleted_asins(paths: list[Path]) -> set[str]:
+def _deleted_asins(paths: list[Path], root: Path) -> set[str]:
     deleted: set[str] = set()
     for path in paths:
-        for row in _read_csv_rows(path, OFFICIAL_REQUIRED_COLUMNS["relationships"]):
+        for row in _read_csv_rows(path, OFFICIAL_REQUIRED_COLUMNS["relationships"], root):
             asin = _valid_asin(row.get("ASIN"))
             if asin and row.get("Deleted By Customer", "").strip() == "Yes":
                 deleted.add(asin)
     return deleted
 
 
-def _parse_official_data(files: dict[str, list[Path]]) -> dict[str, Any]:
-    deleted = _deleted_asins(files["relationships"])
+def _parse_official_data(files: dict[str, list[Path]], root: Path) -> dict[str, Any]:
+    deleted = _deleted_asins(files["relationships"], root)
 
     genres: set[tuple[str, str]] = set()
     for path in files["genres"]:
-        for row in _read_csv_rows(path, OFFICIAL_REQUIRED_COLUMNS["genres"]):
+        for row in _read_csv_rows(path, OFFICIAL_REQUIRED_COLUMNS["genres"], root):
             asin = _valid_asin(row.get("ASIN"))
             genre = _valid_text(row.get("Genre"))
             if asin and genre and asin not in deleted:
@@ -317,7 +318,7 @@ def _parse_official_data(files: dict[str, list[Path]]) -> dict[str, Any]:
 
     series: dict[tuple[str, str, str], tuple[str, str, str, str | None, str | None, int | None, str]] = {}
     for path in files["relationships"]:
-        for row in _read_csv_rows(path, OFFICIAL_REQUIRED_COLUMNS["relationships"]):
+        for row in _read_csv_rows(path, OFFICIAL_REQUIRED_COLUMNS["relationships"], root):
             asin = _valid_asin(row.get("ASIN"))
             if not asin or asin in deleted or row.get("Deleted By Customer", "").strip() == "Yes":
                 continue
@@ -346,7 +347,7 @@ def _parse_official_data(files: dict[str, list[Path]]) -> dict[str, Any]:
     author_ids_seen: dict[str, set[str]] = {}
     author_ids: dict[str, list[str]] = {}
     for path in files["author_ids"]:
-        for row in _read_csv_rows(path, OFFICIAL_REQUIRED_COLUMNS["author_ids"]):
+        for row in _read_csv_rows(path, OFFICIAL_REQUIRED_COLUMNS["author_ids"], root):
             asin = _valid_asin(row.get("ASIN"))
             author_id = _valid_text(row.get("Author ID"))
             if not asin or not author_id or asin in deleted:
@@ -360,7 +361,7 @@ def _parse_official_data(files: dict[str, list[Path]]) -> dict[str, Any]:
     author_names_seen: dict[str, set[str]] = {}
     author_names: dict[str, list[str]] = {}
     for path in files["author_names"]:
-        for row in _read_csv_rows(path, OFFICIAL_REQUIRED_COLUMNS["author_names"]):
+        for row in _read_csv_rows(path, OFFICIAL_REQUIRED_COLUMNS["author_names"], root):
             asin = _valid_asin(row.get("ASIN"))
             author_name = _valid_text(row.get("Author Name"))
             if not asin or not author_name or asin in deleted:
@@ -466,7 +467,7 @@ def import_official_zip(zip_path: str | Path, db_path: str | Path) -> dict[str, 
         root = Path(tmp)
         with zipfile.ZipFile(zip_path) as archive:
             archive.extractall(root)
-        data = _parse_official_data(_official_files(root))
+        data = _parse_official_data(_official_files(root), root)
 
     with closing(connect(db_path)) as con:
         create_schema(con)

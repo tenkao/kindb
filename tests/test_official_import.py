@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -130,8 +131,11 @@ def test_import_official_zip_header_mismatch_preserves_existing(imported_db: Pat
                 dest.writestr(name, source.read(name))
 
     # "Genre" だけだと、エラーに含まれる CSV のパス(CustomerGenres_FE)にも一致する
-    with pytest.raises(ValueError, match="missing Genre; actual columns: ASIN, Bad"):
+    with pytest.raises(ValueError, match="missing Genre; actual columns: ASIN, Bad") as excinfo:
         import_official_zip(broken, imported_db)
+    # 展開先の一時ディレクトリは表示の時点で消えているので、zip 内のパスで示す
+    assert f"in {BASE}/{DATASETS['genres']}/part-000.csv:" in str(excinfo.value)
+    assert tempfile.gettempdir() not in str(excinfo.value)
     assert _official_counts(imported_db) == before
 
 
