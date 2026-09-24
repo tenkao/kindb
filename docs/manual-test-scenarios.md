@@ -318,7 +318,7 @@ kindb recent -n 1 --db "$TEST_DB"
 
 期待:
 - `acquired_at DESC, asin DESC`。
-- 表紙 URL と `read_status` が表示される。
+- `read_status` が表示され、表に表紙 URL の列はない。
 - `-n 1` では 1 冊だけ表示される。
 
 ## 7. delete

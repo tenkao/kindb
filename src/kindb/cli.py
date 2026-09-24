@@ -435,9 +435,10 @@ def recent(
     db: Optional[str] = _db_option(),
 ) -> None:
     """Show recently acquired books."""
+    # 表紙 URL は折り返すと数行にまたがって読み取りにくいため、search と同じく出さない。必要なら kindb query で選ぶ
     _run_table_query(
         db,
-        """SELECT asin, title, authors, read_status, product_image_url, acquired_at
+        """SELECT asin, title, authors, read_status, acquired_at
            FROM v_books
            ORDER BY acquired_at DESC, asin DESC
            LIMIT ?""",
@@ -447,7 +448,6 @@ def recent(
             ("Title", None),
             ("Authors", None),
             ("Status", None),
-            ("Image URL", None),
             ("Acquired", None),
         ],
         params=[limit],

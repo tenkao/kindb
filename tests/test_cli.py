@@ -421,7 +421,7 @@ def test_recent(imported_db: Path) -> None:
     assert result.exit_code == 0
     assert "B000TEST02" in result.output
     assert "UNKNOWN" in result.output
-    assert "https://images.example.com/B000TEST02.jpg" in result.output
+    assert "images.example.com" not in result.output
 
 
 def test_recent_respects_limit(imported_db: Path) -> None:
