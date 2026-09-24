@@ -6,8 +6,11 @@ import json
 import re
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
+import duckdb
 import pytest
 from typer.testing import CliRunner
 
@@ -79,26 +82,62 @@ def test_status_with_db(imported_db: Path) -> None:
     assert "With image URL" in result.output
 
 
-def test_read_command_runs_while_another_process_reads(imported_db: Path) -> None:
-    # MCP サーバや並列実行された kindb が読み取り接続を持っていても、スキーマが最新なら読み取り系コマンドは通る
-    reader = subprocess.Popen(
+@contextmanager
+def _another_process_connected(db_path: Path, *, read_only: bool) -> Iterator[None]:
+    """MCP サーバや別の kindb のように、別プロセスが DB を開いたままの状態を作る。"""
+    holder = subprocess.Popen(
         [
             sys.executable,
             "-c",
-            "import duckdb, sys; con = duckdb.connect(sys.argv[1], read_only=True); print('ready', flush=True); "
-            "sys.stdin.read(); con.close()",
-            str(imported_db),
+            "import duckdb, sys; con = duckdb.connect(sys.argv[1], read_only=sys.argv[2] == 'ro'); "
+            "print('ready', flush=True); sys.stdin.read(); con.close()",
+            str(db_path),
+            "ro" if read_only else "rw",
         ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
     )
     try:
-        assert reader.stdout.readline().strip() == "ready"
-        result = runner.invoke(app, ["status", "--db", str(imported_db)])
-        assert result.exit_code == 0, result.output
+        assert holder.stdout.readline().strip() == "ready"
+        yield
     finally:
-        reader.communicate(input="")
+        holder.communicate(input="")
+
+
+def test_read_command_runs_while_another_process_reads(imported_db: Path) -> None:
+    # MCP サーバや並列実行された kindb が読み取り接続を持っていても、スキーマが最新なら読み取り系コマンドは通る
+    with _another_process_connected(imported_db, read_only=True):
+        result = runner.invoke(app, ["status", "--db", str(imported_db)])
+    assert result.exit_code == 0, result.output
+
+
+@pytest.mark.parametrize(
+    ("holder_read_only", "args"),
+    [
+        # MCP サーバの問い合わせ中に import した場合
+        (True, ["import", "KINDLE_JSON"]),
+        # import の書き込み中に読み取り系コマンドを実行した場合
+        (False, ["search", "テスト"]),
+    ],
+    ids=["import-while-reading", "search-while-writing"],
+)
+def test_lock_conflict_is_reported_in_one_line(
+    imported_db: Path, kindle_json: Path, holder_read_only: bool, args: list[str]
+) -> None:
+    argv = [str(kindle_json) if a == "KINDLE_JSON" else a for a in args]
+    with _another_process_connected(imported_db, read_only=holder_read_only):
+        result = runner.invoke(app, [*argv, "--db", str(imported_db)])
+    assert result.exit_code == 1
+    assert "Database is in use by another process" in result.stderr
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert _title(imported_db, "B000TEST01") == "テストの本"
+
+
+def test_other_io_errors_are_not_reported_as_lock_conflict(tmp_path: Path) -> None:
+    # ディスク障害などを「使用中」と誤って案内すると、原因を調べる手がかりが消える
+    with pytest.raises(duckdb.IOException):
+        connect(tmp_path)
 
 
 def test_search_by_title(imported_db: Path) -> None:

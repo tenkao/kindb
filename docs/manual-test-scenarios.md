@@ -286,6 +286,8 @@ kindb query "DELETE FROM books" --db "$TEST_DB"; echo "exit=$?"
 kindb query "SELECT 1; UPDATE books SET title='hacked' WHERE asin='B000TEST01'" --db "$TEST_DB"; echo "exit=$?"
 kindb query "SELECT repeat('長い書名', 40) || ' [bold]x[/bold]' AS t LIMIT 1" --db "$TEST_DB" | python3 -m json.tool
 for i in 1 2 3 4; do (kindb query "SELECT count(*) AS n FROM v_books" --db "$TEST_DB" > /dev/null; echo "parallel$i exit=$?") & done; wait
+(uv run python -c "import duckdb, sys, time; c = duckdb.connect(sys.argv[1], read_only=True); time.sleep(5)" "$TEST_DB" &); sleep 2
+kindb import tests/fixtures/kindle.json --db "$TEST_DB"; echo "exit=$?"
 ```
 
 期待:
@@ -294,6 +296,7 @@ for i in 1 2 3 4; do (kindb query "SELECT count(*) AS n FROM v_books" --db "$TES
 - 書き込み系 SQL は拒否される。
 - 先頭 SELECT の複文書き込みも単一文チェックで拒否されて `exit=1` になり、DB は変わらない。
 - 並列に実行した 4 本がすべて `exit=0` になる(スキーマが最新なら読み取り系コマンドは書き込み接続を開かない)。
+- 別プロセスが DB を開いている間の import は `exit=1` になり、トレースバックではなく `Database is in use by another process` の 1 行が出る。
 - パイプに流した JSON が `json.tool` で読め、値の末尾に `[bold]x[/bold]` がそのまま残る(端末幅での改行やマークアップ解釈が入らない)。
 
 ## 5. authors

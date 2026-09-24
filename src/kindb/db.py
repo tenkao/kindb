@@ -255,10 +255,22 @@ def wal_path(db_path: Path | str) -> Path:
     return Path(str(db_path) + ".wal")
 
 
+class DatabaseLockedError(Exception):
+    """別のプロセスが DB を開いていて、ロックを取れない。"""
+
+
 def connect(db_path: Path | str, *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    return duckdb.connect(str(db_path), read_only=read_only)
+    try:
+        return duckdb.connect(str(db_path), read_only=read_only)
+    except duckdb.IOException as e:
+        # ロックの衝突だけを案内に置き換える。ディスク障害などほかの IO エラーは、調べられるよう元の例外のまま出す
+        if "Could not set lock" not in str(e):
+            raise
+        raise DatabaseLockedError(
+            f"Database is in use by another process: {db_path}. Wait for it to finish, then retry."
+        ) from e
 
 
 def create_schema(con: duckdb.DuckDBPyConnection) -> None:

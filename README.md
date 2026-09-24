@@ -128,7 +128,7 @@ ln -s "$(pwd)/SKILL.md" ~/.claude/skills/kindb/SKILL.md
    }
    ```
 
-   `mcp-server-motherduck` は既定で読み取り専用で、問い合わせごとに接続を開き直す。このため Claude Desktop を起動したままでも `kindb import` を実行できる。`--max-rows` / `--max-chars` は結果を切り詰める上限で、既定の 1,024 行 / 50,000 文字から上げている。上げすぎると Claude のコンテキストを圧迫するので、用途に合わせて調整する。
+   `mcp-server-motherduck` は既定で読み取り専用で、問い合わせごとに接続を開き直す。このため Claude Desktop を起動したままでも `kindb import` を実行できる。問い合わせの実行中にたまたま重なると `Database is in use by another process` で失敗するので、少し待って再実行する。`--max-rows` / `--max-chars` は結果を切り詰める上限で、既定の 1,024 行 / 50,000 文字から上げている。上げすぎると Claude のコンテキストを圧迫するので、用途に合わせて調整する。
 
 2. **Skill をアップロードする。** `SKILL.md` は MCP での使い方も含む。フォルダに入れて ZIP にし、Claude の Customize > Skills からアップロードする(Settings > Capabilities で Code execution を有効にしておく必要がある)。`SKILL.md` を更新したら ZIP を作り直してアップロードし直す。
 

@@ -89,7 +89,7 @@ kindb の現行仕様と、その設計判断の理由をまとめる。DDL と�
 - `CHECKPOINT` を `COMMIT` の後に置くのは、DuckDB がトランザクション内の `CHECKPOINT` を拒否するため。`CHECKPOINT` で WAL が DB 本体に書き出され、`<db>.wal` が残らない。
 - 2 つの import が互いのテーブルに触れないので、どちらを何度再実行しても、もう一方のデータは残る。`books` が空でも `import-official` は実行できる。
 
-同時アクセスは DuckDB のファイルロックに従う。別プロセスが書き込み接続を持っている間は、読み取り専用の接続も開けない。`mcp-server-motherduck` は既定で読み取り専用かつ一時接続(`--ephemeral-connections`)で動くため、問い合わせの合間は DB ファイルを開いておらず、MCP サーバの起動中でも import できる(v1.0.8 と Claude Desktop で確認)。問い合わせの実行中に import が重なった場合は、どちらかがロックの衝突で失敗しうる。
+同時アクセスは DuckDB のファイルロックに従う。別プロセスが書き込み接続を持っている間は、読み取り専用の接続も開けない。`mcp-server-motherduck` は既定で読み取り専用かつ一時接続(`--ephemeral-connections`)で動くため、問い合わせの合間は DB ファイルを開いておらず、MCP サーバの起動中でも import できる(v1.0.8 と Claude Desktop で確認)。問い合わせの実行中に import が重なった場合は、どちらかがロックの衝突で失敗しうる。kindb 側で衝突したときは、別のプロセスが使用中である旨を 1 行で stderr に出し、終了コード 1 で終わる。ほかの IO エラーは原因を調べられるよう、元の例外のまま出す。
 
 ## スキーマ
 

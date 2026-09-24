@@ -2,21 +2,35 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from kindb.db import connect, ensure_schema, get_db_path, wal_path
+from kindb.db import DatabaseLockedError, connect, ensure_schema, get_db_path, wal_path
 from kindb.importer import import_kindle_json, import_official_zip
 
 app = typer.Typer(help="Kindle library manager powered by DuckDB.")
 console = Console()
 err_console = Console(stderr=True)
+
+
+def _report_locked_db(func: Callable[..., None]) -> Callable[..., None]:
+    # MCP サーバの問い合わせや別の kindb と重なると起きうるので、トレースバックではなく再実行を促す 1 行にする
+    @functools.wraps(func)
+    def wrapper(*args: object, **kwargs: object) -> None:
+        try:
+            func(*args, **kwargs)
+        except DatabaseLockedError as e:
+            err_console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(1)
+
+    return wrapper
 
 
 def _db_option() -> Path:
@@ -56,6 +70,7 @@ def _require_db(db: str | None) -> Path:
 
 
 @app.command("import")
+@_report_locked_db
 def import_cmd(
     json_path: str = typer.Argument(..., help="Path to kindle.json"),
     db: Optional[str] = _db_option(),
@@ -76,6 +91,7 @@ def import_cmd(
 
 
 @app.command("import-official")
+@_report_locked_db
 def import_official_cmd(
     zip_path: str = typer.Argument(..., help="Path to official Kindle.zip"),
     db: Optional[str] = _db_option(),
@@ -97,6 +113,7 @@ def import_official_cmd(
 
 
 @app.command()
+@_report_locked_db
 def status(db: Optional[str] = _db_option()) -> None:
     """Show database status."""
     db_path = _require_db(db)
@@ -146,6 +163,7 @@ def status(db: Optional[str] = _db_option()) -> None:
 
 
 @app.command()
+@_report_locked_db
 def search(
     term: str = typer.Argument(..., help="Search term"),
     limit: int = _list_limit_option(),
@@ -199,6 +217,7 @@ _LIMIT_REQUIRED_SQL = re.compile(r"^\s*(SELECT|WITH)\b", re.IGNORECASE)
 
 
 @app.command()
+@_report_locked_db
 def query(
     sql: str = typer.Argument(..., help="SQL query"),
     table: bool = typer.Option(False, "--table", "-t", help="Output as table instead of JSON"),
@@ -411,6 +430,7 @@ def _format_value(value: object) -> str:
 
 
 @app.command()
+@_report_locked_db
 def authors(
     limit: int = _list_limit_option(),
     db: Optional[str] = _db_option(),
@@ -430,6 +450,7 @@ def authors(
 
 
 @app.command()
+@_report_locked_db
 def recent(
     limit: int = typer.Option(20, "--limit", "-n", help="Number of books to show"),
     db: Optional[str] = _db_option(),
