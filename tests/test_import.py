@@ -75,7 +75,9 @@ def test_import_failure_preserves_existing(kindle_json: Path, db_path: Path, tmp
 def test_failure_while_writing_rolls_back_to_previous_library(
     kindle_json: Path, db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 検証を通ったあとの書き込み中の失敗(ディスク不足など)を、全件 DELETE と INSERT の直後に例外を投げて再現する
+    # 検証を通ったあとの書き込み中の失敗(ディスク不足など)を、全件 DELETE と INSERT の直後に例外を投げて再現する。
+    # 主キーや NOT NULL の違反は検証で先に弾かれ、書き込みを自然に失敗させる手段がないため、private の _insert_rows を
+    # 差し替える。名前が変われば monkeypatch が AttributeError で落ちるので、黙って何も検証しなくなることはない
     import_kindle_json(kindle_json, db_path)
     before = _asins(db_path)
     insert_rows = importer._insert_rows

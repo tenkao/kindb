@@ -6,6 +6,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+import duckdb
 import pytest
 from typer.testing import CliRunner
 
@@ -142,18 +143,22 @@ def test_import_official_zip_header_mismatch_preserves_existing(imported_db: Pat
 def test_import_official_failure_while_writing_rolls_back(
     imported_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # 書き込み中の失敗を、既存行を全件 DELETE して何も入れなかった直後に例外を投げて再現する
+    # 書き込み中の失敗(ディスク不足など)を、置き換えの書き込みを終えた直後に例外を投げて再現する。
+    # 同じ zip の取り込み直しでは件数が変わらないため、テーブルを 1 つ空にしてから投げ、
+    # 巻き戻らなければ差が出るようにする。
+    # 検証を通った入力で書き込みを自然に失敗させる手段がないため、private の _insert_official_data を差し替える。
+    # 名前が変われば monkeypatch が AttributeError で落ちるので、黙って何も検証しなくなることはない
     zip_path = create_official_zip(tmp_path / "Kindle.zip")
     import_official_zip(zip_path, imported_db)
     before = _official_counts(imported_db)
     insert_official_data = importer._insert_official_data
 
-    def _clear_then_fail(con: object, data: dict[str, object], *args: object) -> None:
-        empty = {**data, "genres": [], "series": [], "author_ids": [], "author_names": []}
-        insert_official_data(con, empty, *args)
+    def _write_then_fail(con: duckdb.DuckDBPyConnection, *args: object) -> None:
+        insert_official_data(con, *args)
+        con.execute("DELETE FROM book_genres")
         raise RuntimeError("simulated write failure")
 
-    monkeypatch.setattr(importer, "_insert_official_data", _clear_then_fail)
+    monkeypatch.setattr(importer, "_insert_official_data", _write_then_fail)
     with pytest.raises(RuntimeError):
         import_official_zip(zip_path, imported_db)
 
