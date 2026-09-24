@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import datetime
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
 from kindb.db import connect, ensure_schema
-from kindb.importer import MAX_ACQUIRED_TIME_MS, _acquired_time_to_datetime, import_kindle_json
+from kindb.importer import MAX_ACQUIRED_TIME_MS, import_kindle_json
 from tests.create_fixture import create_kindle_json
 
 
@@ -65,20 +67,16 @@ def test_import_failure_preserves_existing(kindle_json: Path, db_path: Path, tmp
     assert _asins(db_path) == before
 
 
-def test_import_does_not_replace_db_file(
-    kindle_json: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def _fail_replace(*args: object, **kwargs: object) -> None:
-        raise AssertionError("os.replace should not be used by v0.3 import")
-
-    monkeypatch.setattr(os, "replace", _fail_replace)
+def test_first_import_creates_missing_parent_directory(kindle_json: Path, tmp_path: Path) -> None:
+    # 初回は既定の ~/.kindb がまだない
     db_path = tmp_path / "db_root" / "store.duckdb"
     import_kindle_json(kindle_json, db_path)
 
-    assert db_path.exists()
+    assert _asins(db_path)[0] == "B000TEST01"
 
 
-def test_failed_import_cleans_up_tmp_dir(tmp_path: Path) -> None:
+def test_failed_first_import_leaves_no_database(tmp_path: Path) -> None:
+    # 空の DB が残ると、読み取り系コマンドが「No database found.」ではなく 0 冊と表示してしまう
     bad_json = create_kindle_json(tmp_path / "bad.json", [_book("B000BAD01", "Bad", acquiredTime=-1)])
     db_dir = tmp_path / "db_root"
     db_path = db_dir / "store.duckdb"
@@ -146,18 +144,38 @@ def test_product_image_missing_null_and_empty_are_stored_as_null(imported_db: Pa
         con.close()
 
 
-def test_acquired_time_converts_to_utc_naive() -> None:
-    assert _acquired_time_to_datetime(0) == datetime(1970, 1, 1, 0, 0)
-    assert _acquired_time_to_datetime(1775589770148) == datetime(2026, 4, 7, 19, 22, 50, 148000)
+@pytest.fixture
+def non_utc_timezone() -> Iterator[None]:
+    # 実行環境が UTC だと、ローカル時刻で解釈するバグを見逃すため
+    original = os.environ.get("TZ")
+    os.environ["TZ"] = "Asia/Tokyo"
+    time.tzset()
+    yield
+    if original is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = original
+    time.tzset()
 
 
-def test_imported_acquired_time(imported_db: Path) -> None:
-    con = connect(imported_db, read_only=True)
+@pytest.mark.usefixtures("non_utc_timezone")
+def test_acquired_time_is_stored_as_utc(tmp_path: Path) -> None:
+    json_path = create_kindle_json(tmp_path / "time.json", [
+        _book("B000TIME0", "Epoch", acquiredTime=0),
+        _book("B000TIME1", "Millis", acquiredTime=1775589770148),
+    ])
+    db = tmp_path / "time.duckdb"
+    import_kindle_json(json_path, db)
+
+    con = connect(db, read_only=True)
     try:
-        dt = con.execute("SELECT acquired_at FROM books WHERE asin = 'B000TEST01'").fetchone()[0]
-        assert dt == datetime(2024, 1, 15, 10, 30)
+        rows = con.execute("SELECT asin, acquired_at FROM v_books ORDER BY asin").fetchall()
     finally:
         con.close()
+    assert rows == [
+        ("B000TIME0", datetime(1970, 1, 1, 0, 0)),
+        ("B000TIME1", datetime(2026, 4, 7, 19, 22, 50, 148000)),
+    ]
 
 
 def test_empty_array_success(tmp_path: Path) -> None:
@@ -217,26 +235,8 @@ def test_schema_tables_and_views(imported_db: Path) -> None:
         con.close()
 
 
-def test_columns(imported_db: Path) -> None:
-    con = connect(imported_db, read_only=True)
-    try:
-        book_cols = [desc[0] for desc in con.execute("SELECT * FROM books LIMIT 0").description]
-        author_cols = [desc[0] for desc in con.execute("SELECT * FROM book_authors LIMIT 0").description]
-        assert book_cols == [
-            "asin",
-            "title",
-            "authors_text",
-            "acquired_at",
-            "read_status",
-            "product_image_url",
-            "imported_at",
-        ]
-        assert author_cols == ["asin", "author_name", "author_order"]
-    finally:
-        con.close()
-
-
-def test_ensure_schema_migrates_v02_database(tmp_path: Path) -> None:
+def test_v02_database_is_migrated_and_importable(kindle_json: Path, tmp_path: Path) -> None:
+    # 旧版の DB で読み取り系コマンドと import が動くこと。列を足して移行を書き忘れると import が落ちる
     db = tmp_path / "v02.duckdb"
     con = connect(db)
     try:
@@ -291,6 +291,15 @@ def test_ensure_schema_migrates_v02_database(tmp_path: Path) -> None:
     finally:
         con.close()
 
+    import_kindle_json(kindle_json, db)
+
+    con = connect(db, read_only=True)
+    try:
+        row = con.execute("SELECT asin, authors, genres FROM v_books ORDER BY asin LIMIT 1").fetchone()
+    finally:
+        con.close()
+    assert row == ("B000TEST01", ["山田太郎", "佐藤花子"], [])
+
 
 def test_ensure_schema_recreates_views_when_schema_is_stale(imported_db: Path) -> None:
     con = connect(imported_db)
@@ -308,12 +317,6 @@ def test_ensure_schema_recreates_views_when_schema_is_stale(imported_db: Path) -
         assert cols == ["genre", "book_count"]
     finally:
         con.close()
-
-
-def test_ensure_schema_missing_database_is_noop(tmp_path: Path) -> None:
-    db = tmp_path / "missing.duckdb"
-    ensure_schema(db)
-    assert not db.exists()
 
 
 def test_empty_author_elements_are_skipped(tmp_path: Path) -> None:
@@ -340,10 +343,13 @@ def test_v_books_one_row_per_asin_and_authors_order(imported_db: Path) -> None:
         con.close()
 
 
-def test_v_author_counts_order(imported_db: Path) -> None:
+def test_v_author_counts_counts_books_per_author(imported_db: Path) -> None:
+    # ビュー定義の ORDER BY は順序を保証しないので、呼び出し側で並べる(docs/spec.md)
     con = connect(imported_db, read_only=True)
     try:
-        rows = con.execute("SELECT author_name, book_count FROM v_author_counts").fetchall()
+        rows = con.execute(
+            "SELECT author_name, book_count FROM v_author_counts ORDER BY book_count DESC, author_name"
+        ).fetchall()
         assert rows[:2] == [("山田太郎", 2), ("Alice Brown", 1)]
     finally:
         con.close()

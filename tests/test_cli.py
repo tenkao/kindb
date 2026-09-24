@@ -55,9 +55,12 @@ def test_import_unknown_key_warns_on_stderr(tmp_path: Path) -> None:
     assert "extra" in result.output
 
 
-def test_status_no_db(tmp_path: Path) -> None:
-    result = runner.invoke(app, ["status", "--db", str(tmp_path / "nope.duckdb")])
+def test_status_without_db_guides_to_import_and_creates_nothing(tmp_path: Path) -> None:
+    db = tmp_path / "nope.duckdb"
+    result = runner.invoke(app, ["status", "--db", str(db)])
     assert result.exit_code == 1
+    assert "No database found" in result.stderr
+    assert not db.exists()
 
 
 def test_status_with_db(imported_db: Path) -> None:
