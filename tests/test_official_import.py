@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from kindb import importer
 from kindb.cli import app
 from kindb.db import connect
 from kindb.importer import import_kindle_json, import_official_zip
@@ -131,6 +132,59 @@ def test_import_official_zip_header_mismatch_preserves_existing(imported_db: Pat
     with pytest.raises(ValueError, match="Genre"):
         import_official_zip(broken, imported_db)
     assert _official_counts(imported_db) == before
+
+
+def test_import_official_failure_while_writing_rolls_back(
+    imported_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 書き込み中の失敗を、既存行を全件 DELETE して何も入れなかった直後に例外を投げて再現する
+    zip_path = create_official_zip(tmp_path / "Kindle.zip")
+    import_official_zip(zip_path, imported_db)
+    before = _official_counts(imported_db)
+    insert_official_data = importer._insert_official_data
+
+    def _clear_then_fail(con: object, data: dict[str, object], *args: object) -> None:
+        empty = {**data, "genres": [], "series": [], "author_ids": [], "author_names": []}
+        insert_official_data(con, empty, *args)
+        raise RuntimeError("simulated write failure")
+
+    monkeypatch.setattr(importer, "_insert_official_data", _clear_then_fail)
+    with pytest.raises(RuntimeError):
+        import_official_zip(zip_path, imported_db)
+
+    assert _official_counts(imported_db) == before
+
+
+def test_genre_and_series_views_count_library_books(imported_db: Path, tmp_path: Path) -> None:
+    import_official_zip(create_official_zip(tmp_path / "Kindle.zip"), imported_db)
+    con = connect(imported_db)
+    try:
+        # PRIMARY 以外の所属は v_book_series には出るが、シリーズ別の冊数には数えない
+        con.execute(
+            "INSERT INTO book_series VALUES ('B000TEST03', 'B07D4FP6XQ', 'Series Alpha', NULL, NULL, 2, 'OTHER')"
+        )
+        genre_counts = con.execute(
+            "SELECT genre, book_count FROM v_genre_counts ORDER BY book_count DESC, genre"
+        ).fetchall()
+        series_counts = con.execute(
+            "SELECT series_asin, series_title, book_count FROM v_series_counts ORDER BY book_count DESC, series_title"
+        ).fetchall()
+        book_series = con.execute(
+            """SELECT series_asin, series_title, series_position, asin, relation_type
+               FROM v_book_series
+               ORDER BY series_title, series_position NULLS LAST, asin"""
+        ).fetchall()
+    finally:
+        con.close()
+
+    # 削除済みの本と、zip にしかない本は数えない
+    assert genre_counts == [("Fiction", 2), ("Fantasy", 1)]
+    assert series_counts == [("B07D4FP6XQ", "Series Alpha", 1), (None, "Series Without Asin", 1)]
+    assert book_series == [
+        ("B07D4FP6XQ", "Series Alpha", 1, "B000TEST01", "PRIMARY"),
+        ("B07D4FP6XQ", "Series Alpha", 2, "B000TEST03", "OTHER"),
+        (None, "Series Without Asin", None, "B000TEST02", "PRIMARY"),
+    ]
 
 
 def test_v_books_without_official_import_returns_empty_lists(imported_db: Path) -> None:

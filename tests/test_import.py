@@ -11,6 +11,7 @@ from typing import Iterator
 
 import pytest
 
+from kindb import importer
 from kindb.db import connect, ensure_schema
 from kindb.importer import MAX_ACQUIRED_TIME_MS, import_kindle_json
 from tests.create_fixture import create_kindle_json
@@ -63,6 +64,26 @@ def test_import_failure_preserves_existing(kindle_json: Path, db_path: Path, tmp
 
     with pytest.raises(ValueError):
         import_kindle_json(bad_json, db_path)
+
+    assert _asins(db_path) == before
+
+
+def test_failure_while_writing_rolls_back_to_previous_library(
+    kindle_json: Path, db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 検証を通ったあとの書き込み中の失敗(ディスク不足など)を、全件 DELETE と INSERT の直後に例外を投げて再現する
+    import_kindle_json(kindle_json, db_path)
+    before = _asins(db_path)
+    insert_rows = importer._insert_rows
+
+    def _insert_then_fail(*args: object, **kwargs: object) -> None:
+        insert_rows(*args, **kwargs)
+        raise RuntimeError("simulated write failure")
+
+    monkeypatch.setattr(importer, "_insert_rows", _insert_then_fail)
+    next_json = create_kindle_json(tmp_path / "next.json", [_book("B000NEXT01", "Next")])
+    with pytest.raises(RuntimeError):
+        import_kindle_json(next_json, db_path)
 
     assert _asins(db_path) == before
 
