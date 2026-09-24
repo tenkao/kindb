@@ -123,16 +123,6 @@ def test_duplicate_asin_raises(tmp_path: Path) -> None:
         import_kindle_json(json_path, tmp_path / "db.duckdb")
 
 
-def test_unknown_keys_warn_and_continue(tmp_path: Path) -> None:
-    warnings: list[str] = []
-    json_path = create_kindle_json(tmp_path / "unknown.json", [
-        _book("B000WARN1", "Warn", extraField="ignored"),
-    ])
-    result = import_kindle_json(json_path, tmp_path / "db.duckdb", warn=warnings.append)
-    assert result["books_count"] == 1
-    assert warnings == ["ASIN B000WARN1: ignoring unknown keys: extraField"]
-
-
 def test_product_image_missing_null_and_empty_are_stored_as_null(imported_db: Path) -> None:
     con = connect(imported_db, read_only=True)
     try:

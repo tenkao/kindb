@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -35,7 +36,8 @@ def test_import_invalid_json(tmp_path: Path) -> None:
     bad.write_text("{bad", encoding="utf-8")
     result = runner.invoke(app, ["import", str(bad), "--db", str(tmp_path / "t.duckdb")])
     assert result.exit_code == 1
-    assert "Invalid JSON" in result.output
+    assert "Invalid JSON" in result.stderr
+    assert result.stdout == ""
 
 
 def test_import_unknown_key_warns_on_stderr(tmp_path: Path) -> None:
@@ -51,8 +53,11 @@ def test_import_unknown_key_warns_on_stderr(tmp_path: Path) -> None:
     ])
     result = runner.invoke(app, ["import", str(src), "--db", str(tmp_path / "db.duckdb")])
     assert result.exit_code == 0
-    assert "Warning:" in result.output
-    assert "extra" in result.output
+    # どの本のどのキーかが分かり、パイプした stdout には混ざらないこと
+    assert "B000WARN1" in result.stderr
+    assert "extra" in result.stderr
+    assert "Warning" not in result.stdout
+    assert "1 books" in result.stdout
 
 
 def test_status_without_db_guides_to_import_and_creates_nothing(tmp_path: Path) -> None:
@@ -66,8 +71,7 @@ def test_status_without_db_guides_to_import_and_creates_nothing(tmp_path: Path) 
 def test_status_with_db(imported_db: Path) -> None:
     result = runner.invoke(app, ["status", "--db", str(imported_db)])
     assert result.exit_code == 0
-    assert "Books" in result.output
-    assert "5" in result.output
+    assert re.search(r"\bBooks\b\W+5\b", result.output)
     assert "Read status: READ" in result.output
     assert "Read status: READING" in result.output
     assert "Read status: UNKNOWN" in result.output
@@ -172,28 +176,24 @@ def test_search_omits_image_url(imported_db: Path) -> None:
 
 def test_search_rejects_negative_limit(imported_db: Path) -> None:
     result = runner.invoke(app, ["search", "Book", "-n", "-1", "--db", str(imported_db)])
-    assert result.exit_code != 0
+    # 2 は引数エラー。下限の検証がないと DuckDB の例外で 1 になる
+    assert result.exit_code == 2
 
 
-def test_search_escapes_percent_wildcard(imported_db: Path) -> None:
-    result = runner.invoke(app, ["search", "50%", "--db", str(imported_db)])
+@pytest.mark.parametrize(
+    ("term", "asin"),
+    [
+        # 1 文字だけで検索し、ワイルドカードとして解釈されたら全件に当たるようにする
+        ("%", "B000TEST04"),
+        ("_", "B000TEST04"),
+        ("\\", "B000TEST05"),
+    ],
+)
+def test_search_treats_like_wildcards_as_literals(imported_db: Path, term: str, asin: str) -> None:
+    result = runner.invoke(app, ["search", term, "--db", str(imported_db)])
     assert result.exit_code == 0
-    assert "B000TEST04" in result.output
-    assert "B000TEST01" not in result.output
-
-
-def test_search_escapes_underscore_wildcard(imported_db: Path) -> None:
-    result = runner.invoke(app, ["search", "OFF_", "--db", str(imported_db)])
-    assert result.exit_code == 0
-    assert "B000TEST04" in result.output
-    assert "B000TEST01" not in result.output
-
-
-def test_search_escapes_backslash(imported_db: Path) -> None:
-    result = runner.invoke(app, ["search", "A\\B", "--db", str(imported_db)])
-    assert result.exit_code == 0
-    assert "B000TEST05" in result.output
-    assert "B000TEST02" not in result.output
+    assert asin in result.output
+    assert "Showing 1 of 1 results" in result.output
 
 
 def test_query_json(imported_db: Path) -> None:
@@ -253,7 +253,7 @@ def test_query_allows_unlimited_when_explicit(imported_db: Path) -> None:
         app, ["query", "--allow-unlimited", "SELECT asin FROM books ORDER BY asin", "--db", str(imported_db)]
     )
     assert result.exit_code == 0
-    assert "--allow-unlimited" not in result.output
+    assert len(json.loads(result.output)) == 5
 
 
 def test_query_rejects_write(imported_db: Path) -> None:
@@ -313,6 +313,7 @@ def test_query_allows_simple_aggregate_without_limit(imported_db: Path, sql: str
     [
         "SELECT read_status, count(*) FROM books GROUP BY read_status",
         "SELECT author_name, count(*) FROM book_authors GROUP BY author_name",
+        "SELECT count(*) FROM books GROUP BY read_status",
     ],
 )
 def test_query_rejects_grouped_aggregate_without_limit(imported_db: Path, sql: str) -> None:
