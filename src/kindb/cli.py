@@ -455,7 +455,7 @@ def authors(
         db,
         sql + (" LIMIT ?" if limit else ""),
         title="Authors",
-        columns=[("Author", None), ("Books", "right")],
+        columns=[("Author", {}), ("Books", {"justify": "right"})],
         params=[limit] if limit else None,
         total=("SELECT count(*) FROM v_author_counts", "authors"),
     )
@@ -477,11 +477,11 @@ def recent(
            LIMIT ?""",
         title="Recent Books",
         columns=[
-            ("ASIN", "dim"),
-            ("Title", None),
-            ("Authors", None),
-            ("Status", None),
-            ("Acquired", None),
+            ("ASIN", {"style": "dim"}),
+            ("Title", {}),
+            ("Authors", {}),
+            ("Status", {}),
+            ("Acquired", {}),
         ],
         params=[limit],
     )
@@ -514,7 +514,7 @@ def _run_table_query(
     sql: str,
     *,
     title: str,
-    columns: list[tuple[str, str | None]],
+    columns: list[tuple[str, dict[str, str]]],
     params: list | None = None,
     total: tuple[str, str] | None = None,
 ) -> None:
@@ -528,8 +528,9 @@ def _run_table_query(
             return
 
         table = Table(title=title)
-        for name, justify in columns:
-            _add_column(table, name, justify=justify)
+        # 列ごとの指定は Table.add_column の引数名で渡す。位置で justify と決め打つと、style の指定が justify に化ける
+        for name, options in columns:
+            _add_column(table, name, **options)
         for row in rows:
             table.add_row(*[_format_value(v) for v in row])
         console.print(table)
