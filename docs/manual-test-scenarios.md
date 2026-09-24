@@ -288,7 +288,7 @@ Path("/tmp/kindb_manual/long_title.json").write_text(json.dumps([{
   "readStatus": "UNKNOWN",
   "asin": "B000LONG01"
 }, {
-  "title": "Clean Code [Paperback] [/i] ソフトウェア",
+  "title": "Clean Code [Paperback] [/i] :thumbs_up: ソフトウェア",
   "authors": "Author",
   "acquiredTime": 1704067300000,
   "readStatus": "UNKNOWN",
@@ -302,7 +302,8 @@ env -u COLUMNS kindb recent --db /tmp/kindb_manual/long_title.duckdb | cat
 
 期待:
 - 書名が `…` で切れず、Title 列の中で複数行に折り返されて全文が表示される。
-- `[Paperback]` と `[/i]` が消えずにそのまま表示され、コマンドがエラーにならない。
+- `[Paperback]`、`[/i]`、`:thumbs_up:` が消えたり絵文字に置き換わったりせず、そのまま表示される。コマンドもエラーにならない。
+- `kindb import` の `Database:` の行は、パスが長くても途中で改行されない。
 
 ## 4. query
 

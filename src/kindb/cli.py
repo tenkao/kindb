@@ -17,11 +17,13 @@ from kindb.db import DatabaseLockedError, connect, ensure_schema, get_db_path, w
 from kindb.importer import import_kindle_json, import_official_zip
 
 app = typer.Typer(help="Kindle library manager powered by DuckDB.")
-# 書名やパスなどのデータを rich のマークアップとして解釈させない。解釈すると [Paperback] は黙って消え、[/i] で落ちる。
-# 色を付けるラベルは _styled で明示する
-console = Console(markup=False)
-# エラーは 1 行で読めるよう端末幅で折り返さない。折り返すとパスの途中に改行が入り、grep や AI の読み取りで切れる
-err_console = Console(stderr=True, soft_wrap=True, markup=False)
+# 書名やパスなどのデータを rich のマークアップや絵文字の記法として解釈させない。解釈すると [Paperback] は黙って消え、
+# [/i] で落ち、:smile: は絵文字に化ける。色を付けるラベルは _styled で明示する
+console = Console(markup=False, emoji=False)
+# パスを含む行は端末幅で折り返さない(soft_wrap)。折り返すとパスの途中に改行が入り、grep や AI の読み取りで切れる。
+# console 全体に付けると表のタイトルが中央寄せされなくなるので、表を出さない err_console だけ全体に付け、
+# console ではパスを出す行ごとに付ける
+err_console = Console(stderr=True, markup=False, emoji=False, soft_wrap=True)
 
 
 def _styled(label: str, style: str, rest: str = "") -> Text:
@@ -96,7 +98,7 @@ def import_cmd(
             warn=lambda msg: err_console.print(_styled("Warning:", "yellow", f" {msg}")),
         )
         console.print(_styled("Import complete:", "green", f" {result['books_count']} books"))
-        console.print(f"Database: {result['db_path']}")
+        console.print(f"Database: {result['db_path']}", soft_wrap=True)
     except (FileNotFoundError, ValueError) as e:
         _print_error(str(e))
         raise typer.Exit(1)
@@ -118,7 +120,7 @@ def import_official_cmd(
         console.print(f"Author IDs: {result['author_ids_count']}")
         console.print(f"Author names: {result['author_names_count']}")
         console.print(f"Official ASIN: {result['distinct_asin_count']}")
-        console.print(f"Database: {result['db_path']}")
+        console.print(f"Database: {result['db_path']}", soft_wrap=True)
     except (FileNotFoundError, ValueError) as e:
         _print_error(str(e))
         raise typer.Exit(1)
@@ -504,7 +506,7 @@ def delete(
 
     db_path.unlink(missing_ok=True)
     wal_path(db_path).unlink(missing_ok=True)
-    console.print(_styled("Deleted:", "green", f" {db_path}"))
+    console.print(_styled("Deleted:", "green", f" {db_path}"), soft_wrap=True)
 
 
 def _run_table_query(

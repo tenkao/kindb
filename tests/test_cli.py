@@ -242,9 +242,9 @@ def test_search_rejects_negative_limit(imported_db: Path) -> None:
     ],
     ids=["search", "recent", "query-table"],
 )
-def test_tables_show_bracketed_titles_as_is(tmp_path: Path, args: list[str]) -> None:
-    # 書名の [英字...] を rich のマークアップとして解釈すると、黙って消えるか MarkupError で落ちる
-    titles = ["Clean Code [Paperback]", "Broken [/i] Paperback"]
+def test_tables_show_titles_as_is(tmp_path: Path, args: list[str]) -> None:
+    # 書名の [英字...] をマークアップとして解釈すると黙って消えるか MarkupError で落ち、:smile: は絵文字に化ける
+    titles = ["Clean Code [Paperback]", "Broken [/i] Paperback", "Emoji :thumbs_up: Paperback"]
     rows = [
         {"title": t, "authors": "Author", "acquiredTime": 1704067200000 + i, "readStatus": "UNKNOWN",
          "asin": f"B000MARK0{i}"}

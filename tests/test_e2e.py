@@ -170,7 +170,10 @@ def test_bad_inputs_and_unsafe_queries_leave_library_intact(kindb: KindbSession,
     # エラーは Claude Code の Bash と同じ既定の幅(80 桁)でも 1 行で出ること
     kindb.env.pop("COLUMNS")
     kindle_zip = create_official_zip(tmp_path / "Kindle.zip")
-    assert kindb.run("import", create_kindle_json(tmp_path / "kindle.json")).returncode == 0
+    imported = kindb.run("import", create_kindle_json(tmp_path / "kindle.json"))
+    assert imported.returncode == 0
+    # パスを含む行も 80 桁で折り返さない。折り返すと記録の一時パスを置き換えられず、実行ごとに記録が変わる
+    assert f"Database: {kindb.db}\n" in imported.stdout
     assert kindb.run("import-official", kindle_zip).returncode == 0
     snapshot_sql = "SELECT asin, title, genres FROM v_books ORDER BY asin LIMIT 100"
     snapshot = kindb.query(snapshot_sql)
