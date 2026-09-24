@@ -23,7 +23,7 @@ Amazon のアカウントサービスから取得した公式 `Kindle.zip` は�
 
 ## インストール
 
-Python >= 3.10。開発環境は [uv](https://docs.astral.sh/uv/) で管理し、`.python-version` で Python 3.13 に固定している。
+macOS と Linux で動かす前提(Windows では確認していない)。Python >= 3.10。開発環境は [uv](https://docs.astral.sh/uv/) で管理し、`.python-version` で Python 3.13 に固定している。
 
 ```bash
 uv sync                          # .venv を作成し、開発依存込みでインストール
