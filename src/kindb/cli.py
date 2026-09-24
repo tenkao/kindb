@@ -11,14 +11,25 @@ from typing import Callable, Optional
 import typer
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from kindb.db import DatabaseLockedError, connect, ensure_schema, get_db_path, wal_path
 from kindb.importer import import_kindle_json, import_official_zip
 
 app = typer.Typer(help="Kindle library manager powered by DuckDB.")
-console = Console()
+# 書名やパスなどのデータを rich のマークアップとして解釈させない。解釈すると [Paperback] は黙って消え、[/i] で落ちる。
+# 色を付けるラベルは _styled で明示する
+console = Console(markup=False)
 # エラーは 1 行で読めるよう端末幅で折り返さない。折り返すとパスの途中に改行が入り、grep や AI の読み取りで切れる
-err_console = Console(stderr=True, soft_wrap=True)
+err_console = Console(stderr=True, soft_wrap=True, markup=False)
+
+
+def _styled(label: str, style: str, rest: str = "") -> Text:
+    return Text.assemble((label, style), rest)
+
+
+def _print_error(message: str) -> None:
+    err_console.print(_styled("Error:", "red", f" {message}"))
 
 
 def _report_locked_db(func: Callable[..., None]) -> Callable[..., None]:
@@ -28,7 +39,7 @@ def _report_locked_db(func: Callable[..., None]) -> Callable[..., None]:
         try:
             func(*args, **kwargs)
         except DatabaseLockedError as e:
-            err_console.print(f"[red]Error:[/red] {e}")
+            _print_error(str(e))
             raise typer.Exit(1)
 
     return wrapper
@@ -64,7 +75,7 @@ def _escape_like(term: str) -> str:
 def _require_db(db: str | None) -> Path:
     db_path = get_db_path(db)
     if not db_path.exists():
-        err_console.print("[yellow]No database found.[/yellow] Run 'kindb import' first.")
+        err_console.print(_styled("No database found.", "yellow", " Run 'kindb import' first."))
         raise typer.Exit(1)
     ensure_schema(db_path)
     return db_path
@@ -82,12 +93,12 @@ def import_cmd(
         result = import_kindle_json(
             json_path,
             db_path,
-            warn=lambda msg: err_console.print(f"[yellow]Warning:[/yellow] {msg}"),
+            warn=lambda msg: err_console.print(_styled("Warning:", "yellow", f" {msg}")),
         )
-        console.print(f"[green]Import complete:[/green] {result['books_count']} books")
+        console.print(_styled("Import complete:", "green", f" {result['books_count']} books"))
         console.print(f"Database: {result['db_path']}")
     except (FileNotFoundError, ValueError) as e:
-        err_console.print(f"[red]Error:[/red] {e}")
+        _print_error(str(e))
         raise typer.Exit(1)
 
 
@@ -101,7 +112,7 @@ def import_official_cmd(
     db_path = get_db_path(db)
     try:
         result = import_official_zip(zip_path, db_path)
-        console.print("[green]Official import complete[/green]")
+        console.print(_styled("Official import complete", "green"))
         console.print(f"Genres: {result['genres_count']}")
         console.print(f"Series: {result['series_count']}")
         console.print(f"Author IDs: {result['author_ids_count']}")
@@ -109,7 +120,7 @@ def import_official_cmd(
         console.print(f"Official ASIN: {result['distinct_asin_count']}")
         console.print(f"Database: {result['db_path']}")
     except (FileNotFoundError, ValueError) as e:
-        err_console.print(f"[red]Error:[/red] {e}")
+        _print_error(str(e))
         raise typer.Exit(1)
 
 
@@ -233,16 +244,14 @@ def query(
     db_path = _require_db(db)
 
     if not _ALLOWED_SQL.match(sql):
-        err_console.print(
-            "[red]Error:[/red] Only SELECT, WITH, SHOW, DESCRIBE, EXPLAIN, PRAGMA statements are allowed."
-        )
+        _print_error("Only SELECT, WITH, SHOW, DESCRIBE, EXPLAIN, PRAGMA statements are allowed.")
         raise typer.Exit(1)
     if _has_multiple_statements(sql):
-        err_console.print("[red]Error:[/red] Only a single SQL statement is allowed.")
+        _print_error("Only a single SQL statement is allowed.")
         raise typer.Exit(1)
     if not allow_unlimited and _requires_limit(sql) and not _has_safe_limit_or_aggregate(sql):
-        err_console.print(
-            "[red]Error:[/red] SELECT/WITH queries must include a top-level LIMIT, for example "
+        _print_error(
+            "SELECT/WITH queries must include a top-level LIMIT, for example "
             "`SELECT title FROM v_books ORDER BY title LIMIT 100 OFFSET 0`. "
             "Use `--allow-unlimited` only when you intentionally want an unlimited result."
         )
@@ -495,7 +504,7 @@ def delete(
 
     db_path.unlink(missing_ok=True)
     wal_path(db_path).unlink(missing_ok=True)
-    console.print(f"[green]Deleted:[/green] {db_path}")
+    console.print(_styled("Deleted:", "green", f" {db_path}"))
 
 
 def _run_table_query(

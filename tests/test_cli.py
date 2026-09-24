@@ -234,6 +234,39 @@ def test_search_rejects_negative_limit(imported_db: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    "args",
+    [
+        ["search", "Paperback"],
+        ["recent"],
+        ["query", "--table", "SELECT asin, title FROM v_books ORDER BY asin LIMIT 10"],
+    ],
+    ids=["search", "recent", "query-table"],
+)
+def test_tables_show_bracketed_titles_as_is(tmp_path: Path, args: list[str]) -> None:
+    # 書名の [英字...] を rich のマークアップとして解釈すると、黙って消えるか MarkupError で落ちる
+    titles = ["Clean Code [Paperback]", "Broken [/i] Paperback"]
+    rows = [
+        {"title": t, "authors": "Author", "acquiredTime": 1704067200000 + i, "readStatus": "UNKNOWN",
+         "asin": f"B000MARK0{i}"}
+        for i, t in enumerate(titles)
+    ]
+    db = tmp_path / "markup.duckdb"
+    import_kindle_json(create_kindle_json(tmp_path / "markup.json", rows), db)
+
+    result = runner.invoke(app, [*args, "--db", str(db)])
+    assert result.exit_code == 0, result.output
+    for title in titles:
+        assert title in result.output
+
+
+def test_errors_show_bracketed_paths_as_is(tmp_path: Path) -> None:
+    missing = tmp_path / "[bold]missing[/bold].json"
+    result = runner.invoke(app, ["import", str(missing), "--db", str(tmp_path / "db.duckdb")])
+    assert result.exit_code == 1
+    assert str(missing) in result.stderr
+
+
+@pytest.mark.parametrize(
     ("term", "asin"),
     [
         # 1 文字だけで検索し、ワイルドカードとして解釈されたら全件に当たるようにする

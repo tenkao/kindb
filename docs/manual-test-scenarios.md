@@ -275,7 +275,7 @@ kindb search "A\\B" --db "$TEST_DB"
 
 期待: `%`, `_`, `\` は ILIKE ワイルドカードではなく文字として扱われる。
 
-パイプ出力(Claude Code の Bash と同じ 80 桁)での長い書名:
+パイプ出力(Claude Code の Bash と同じ 80 桁)での長い書名と、角括弧を含む書名:
 
 ```bash
 uv run python - <<'PY'
@@ -287,6 +287,12 @@ Path("/tmp/kindb_manual/long_title.json").write_text(json.dumps([{
   "acquiredTime": 1704067200000,
   "readStatus": "UNKNOWN",
   "asin": "B000LONG01"
+}, {
+  "title": "Clean Code [Paperback] [/i] ソフトウェア",
+  "authors": "Author",
+  "acquiredTime": 1704067300000,
+  "readStatus": "UNKNOWN",
+  "asin": "B000LONG02"
 }], ensure_ascii=False), encoding="utf-8")
 PY
 kindb import /tmp/kindb_manual/long_title.json --db /tmp/kindb_manual/long_title.duckdb
@@ -294,7 +300,9 @@ env -u COLUMNS kindb search ソフトウェア --db /tmp/kindb_manual/long_title
 env -u COLUMNS kindb recent --db /tmp/kindb_manual/long_title.duckdb | cat
 ```
 
-期待: 書名が `…` で切れず、Title 列の中で複数行に折り返されて全文が表示される。
+期待:
+- 書名が `…` で切れず、Title 列の中で複数行に折り返されて全文が表示される。
+- `[Paperback]` と `[/i]` が消えずにそのまま表示され、コマンドがエラーにならない。
 
 ## 4. query
 
