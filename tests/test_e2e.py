@@ -138,32 +138,20 @@ def test_library_lifecycle(kindb: KindbSession, tmp_path: Path) -> None:
     assert "No database found" in after_delete.stderr
 
 
-def test_tables_keep_long_japanese_titles_at_claude_code_width(kindb: KindbSession, tmp_path: Path) -> None:
-    # Claude Code の Bash は COLUMNS を子プロセスに渡さず、出力はパイプなので rich は 80 桁で表を組む。
-    # その幅でも、空白のない日本語の書名を「…」で切らないこと
+def test_tables_are_80_columns_when_run_like_claude_code(kindb: KindbSession, tmp_path: Path) -> None:
+    # Claude Code の Bash は COLUMNS を子プロセスに渡さず、出力はパイプになる。
+    # この条件で rich が 80 桁で表を組むことが、test_cli.py で COLUMNS=80 として書名の折り返しを確かめている前提になる
     kindb.env.pop("COLUMNS")
     title = "ソフトウェアアーキテクチャの基礎 ―エンジニアリングに基づく体系的アプローチ"
-    book = {"title": title, "authors": "Mark Richards, Neal Ford, 島田浩二", "acquiredTime": 1704067200000,
-            "readStatus": "UNKNOWN", "asin": "B08TWRWZFL", "productImage": "https://images.example.com/B08TWRWZFL.jpg"}
+    book = {"title": title, "authors": "Author", "acquiredTime": 1704067200000, "readStatus": "UNKNOWN",
+            "asin": "B08TWRWZFL"}
     assert kindb.run("import", create_kindle_json(tmp_path / "kindle.json", [book])).returncode == 0
 
-    for args in [
-        ("search", "ソフトウェア"),
-        ("recent",),
-        ("query", "--table", "SELECT asin, title, authors_text FROM v_books LIMIT 1"),
-    ]:
-        shown = kindb.run(*args)
-        assert shown.returncode == 0, shown.stderr
-        assert "…" not in shown.stdout, args
-        assert "B08TWRWZFL" in shown.stdout, args
-        # 折り返された書名の列の断片をつなぐと、書名の全文になる
-        assert _column_text(shown.stdout, 1) == title.replace(" ", ""), args
-
-
-def _column_text(table_output: str, column: int) -> str:
-    """1 行だけの表から、折り返された列の断片を空白を除いてつなぐ。"""
-    body = [line.split("│") for line in table_output.splitlines() if line.startswith("│")]
-    return "".join(cells[column + 1].replace(" ", "") for cells in body)
+    shown = kindb.run("search", "ソフトウェア")
+    assert shown.returncode == 0, shown.stderr
+    # 書名が長いので、表は端末幅いっぱいに広がる
+    top_border = next(line for line in shown.stdout.splitlines() if line.startswith("┏"))
+    assert len(top_border) == 80
 
 
 def test_bad_inputs_and_unsafe_queries_leave_library_intact(kindb: KindbSession, tmp_path: Path) -> None:

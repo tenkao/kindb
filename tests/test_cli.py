@@ -259,6 +259,39 @@ def test_tables_show_titles_as_is(tmp_path: Path, args: list[str]) -> None:
         assert title in result.output
 
 
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["search", "ソフトウェア"],
+        ["recent"],
+        ["query", "--table", "SELECT asin, title, authors_text FROM v_books LIMIT 1"],
+    ],
+    ids=["search", "recent", "query-table"],
+)
+def test_tables_keep_long_japanese_titles_at_80_columns(
+    tmp_path: Path, args: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Claude Code の Bash では 80 桁で表が組まれる(前提は test_e2e.py で確かめる)。
+    # rich の既定では空白のない日本語の書名が 1 語として「…」で切られるので、その幅でも全文が残ること
+    monkeypatch.setenv("COLUMNS", "80")
+    title = "ソフトウェアアーキテクチャの基礎 ―エンジニアリングに基づく体系的アプローチ"
+    book = {"title": title, "authors": "Mark Richards, Neal Ford, 島田浩二", "acquiredTime": 1704067200000,
+            "readStatus": "UNKNOWN", "asin": "B08TWRWZFL"}
+    db = tmp_path / "long.duckdb"
+    import_kindle_json(create_kindle_json(tmp_path / "long.json", [book]), db)
+
+    result = runner.invoke(app, [*args, "--db", str(db)])
+    assert result.exit_code == 0, result.output
+    assert "…" not in result.stdout
+    assert _column_text(result.stdout, 1) == title.replace(" ", "")
+
+
+def _column_text(table_output: str, column: int) -> str:
+    """1 行だけの表から、折り返された列の断片を空白を除いてつなぐ。rich の既定の罫線(│)を前提にする。"""
+    body = [line.split("│") for line in table_output.splitlines() if line.startswith("│")]
+    return "".join(cells[column + 1].replace(" ", "") for cells in body)
+
+
 def test_errors_show_bracketed_paths_as_is(tmp_path: Path) -> None:
     missing = tmp_path / "[bold]missing[/bold].json"
     result = runner.invoke(app, ["import", str(missing), "--db", str(tmp_path / "db.duckdb")])
