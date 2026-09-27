@@ -24,7 +24,8 @@ kindb rematch
 | `src/kindb/matching.py` | 書名の正規化、巻数とレーベルの抽出、候補の絞り込み、照合結果(作品の属性と版の属性)の決定 | なし(純粋関数) |
 | `src/kindb/enrich.py` | 対象の選択、取得の進行、バッファと書き込み、再開、rematch | `ndl`, `matching`, `db` |
 | `src/kindb/sqlguard.py` | `kindb query` の SQL 検査を `cli.py` から移す | なし |
-| `src/kindb/data/ndc9_3digit.tsv` | NDC9 の 3 桁の分類名(JLA、CC-BY) | |
+| `src/kindb/data/ndc9_3digit.tsv` | NDC9 の 3 桁の分類名(JLA、CC-BY)。生成物だけを置く | |
+| `scripts/build_ndc_table.py` | リポジトリの外に置いた `ndc9.ttl` のパスを受け取り、上の TSV を生成する | 標準ライブラリだけ |
 
 `sqlguard.py` に移すのは、`enrich.py` が `--where` の検査に同じ関数を使い、`cli.py` から import すると循環するため。
 
@@ -99,7 +100,7 @@ NDC 分類名は、同梱の TSV を Python 側で `VALUES` の CTE に展開し
 
 0. **下調べ**(スキーマを固める前に行う)
    - `dpid=iss-ndl-opac` や `mediatype` の指定で電子書籍の書誌を除けるかを、標本の数冊で確かめる。
-   - JLA の `ndc9.ttl` を取得して 3 桁の TSV を作る。取得は利用者に依頼する(curl が権限で拒否されるため)。NDC10 の記号の上位 3 桁で名前を引いたとき、明らかにずれるものがないかを標本の NDC で見る。
+   - 利用者がダウンロードした `ndc9.ttl` から 3 桁の TSV を作る。ttl はリポジトリの外に置いたまま、生成スクリプトにパスで渡す(`.gitignore` には足さない)。標本の NDC は 3 桁の名前がすべて引けることを確かめ済み。
    - hatchling が `src/kindb/data/` の TSV を wheel と editable インストールに含めるかを確かめる。
    - 結果は requirements の「未確認の事実」に書き戻す。
 1. `sqlguard.py` への移動(振る舞いは変えない)
@@ -119,5 +120,6 @@ NDC 分類名は、同梱の TSV を Python 側で `VALUES` の CTE に展開し
 
 requirements のスコープ外に加えて:
 
+- NDC の 4 桁以上の分類名。ttl には 12,385 件あり、例えば 007.64 は「情報科学 > データ処理．情報処理 > コンピュータ プログラミング」まで引ける。10 版の記号を 9 版の表で深く引くほど版の差でずれる恐れがあり、表も最大 12,385 行に増えるため、3 桁で足りないと分かったら足す候補にする
 - 取得の並列化
 - `bib_candidates` の古い候補の掃除
