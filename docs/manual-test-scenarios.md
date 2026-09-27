@@ -1,6 +1,6 @@
 # kindb 手動テストシナリオ
 
-kindb v0.3 を実際のターミナルで目視確認するためのシナリオ。主入力は `kindle.json`。任意で公式 `Kindle.zip` を追加取り込みし、ジャンル・シリーズ・Amazon 著者 ID を補完する。
+kindb v0.4 を実際のターミナルで目視確認するためのシナリオ。主入力は `kindle.json`。任意で公式 `Kindle.zip` を追加取り込みし、ジャンル・シリーズ・Amazon 著者 ID を補完する。§8.5 だけは NDL サーチに実際に問い合わせる(数十件)。
 
 ## 0. 準備
 
@@ -28,7 +28,7 @@ kindb --help
 ```
 
 期待:
-- `kindb --help` に `import`, `import-official`, `status`, `search`, `query`, `authors`, `recent`, `delete` が表示される。
+- `kindb --help` に `import`, `import-official`, `status`, `search`, `query`, `authors`, `recent`, `enrich`, `rematch`, `delete` が表示される。
 - `genres`, `series`, `reading` は表示されない。
 
 ## 1. import
@@ -413,8 +413,8 @@ kindb query --table "
 ```
 
 期待:
-- `SHOW TABLES`: `books`, `book_authors`, `import_metadata` に加え、`book_genres`, `book_series`, `book_author_ids`, `book_author_names`, `import_metadata_official`, `schema_meta` と v0.3 の view 群が表示される。
-- `DESCRIBE v_books`: `genres`, `series_title`, `series_asin`, `series_position`, `author_ids`, `author_names_official` が表示される。
+- `SHOW TABLES`: `books`, `book_authors`, `import_metadata` に加え、`book_genres`, `book_series`, `book_author_ids`, `book_author_names`, `import_metadata_official`, `schema_meta`, `bib_*` の 7 テーブルと、`v_ndc_labels` を含む view 群が表示される。
+- `DESCRIBE v_books`: `genres`, `series_title`, `series_asin`, `series_position`, `author_ids`, `author_names_official` に加え、`isbn`, `paper_issued`, `publisher`, `pages`, `bib_series`, `ndc`, `ndc_label`, `subjects`, `bib_notes`, `bib_match` が表示される。
 - `SELECT * FROM v_books`: 1 ASIN 1 行で並び、`authors` 配列・`authors_text`・`product_image_url`・`read_status`・`acquired_at` に加え、`genres`, `series_title`, `series_asin`, `series_position`, `author_ids`, `author_names_official` が表示される。
 - `SELECT * FROM v_author_counts`: `book_count DESC, author_name ASC` で並ぶ。
 - `SELECT * FROM v_genre_counts`: `Fiction` が 2 冊、`Fantasy` が 1 冊で表示される。
@@ -461,6 +461,76 @@ kindb query "SELECT count(*) AS n FROM v_book_genres WHERE asin = 'B000ZIP001'" 
 - `Deleted By Customer = Yes` の `B000DEL001` は 0 行。
 - `ASIN = Not Available` は 0 行。
 - zip にしかない `B000ZIP001` は raw table には残るが、`v_book_genres` では 0 行。
+
+## 8.5 書誌情報(enrich / rematch)
+
+NDL サーチに実際に問い合わせる。送るのは下の 4 冊の書名と著者だけで、問い合わせは 3 秒間隔で 10 件程度(1 分弱)。
+
+```bash
+cat > /tmp/kindb_manual/bib.json <<'JSON'
+[
+  {"title": "HARD THINGS　答えがない難問と困難にきみはどう立ち向かうか", "authors": "ベン・ホロウィッツ", "acquiredTime": 1704067200000, "readStatus": "READ", "asin": "B00W535LOU"},
+  {"title": "つげ義春日記 (講談社文芸文庫)", "authors": "つげ義春", "acquiredTime": 1704067200000, "readStatus": "UNKNOWN", "asin": "B088GZFB9Z"},
+  {"title": "理想のヒモ生活(25) (角川コミックス・エース)", "authors": "日月 ネコ", "acquiredTime": 1704067200000, "readStatus": "UNKNOWN", "asin": "B0GMYR661F"},
+  {"title": "存在しない本のための架空の書名", "authors": "架空の著者", "acquiredTime": 1704067200000, "readStatus": "UNKNOWN", "asin": "B000NOBOOK"}
+]
+JSON
+export BIB_DB=/tmp/kindb_manual/bib.duckdb
+kindb import /tmp/kindb_manual/bib.json --db "$BIB_DB"
+kindb status --db "$BIB_DB"
+kindb enrich --limit 2 --db "$BIB_DB"
+kindb enrich --db "$BIB_DB"
+kindb status --db "$BIB_DB"
+kindb query --table "SELECT asin, bib_match, isbn, paper_issued, publisher, pages, ndc, ndc_label, subjects FROM v_books ORDER BY asin LIMIT 10" --db "$BIB_DB"
+kindb search 経営管理 --db "$BIB_DB"
+```
+
+期待:
+- 取得前の `status` に `Bib not fetched: 4` が出て、`Bib status` の行は出ない。
+- 1 回目の `enrich` は `Fetching 2 books` で始まり、`[1/2] B000NOBOOK not_found …` と `[2/2] B00W535LOU found (edition) …` の 2 行を出す(ASIN の順)。
+- 2 回目の `enrich` は残りの 2 冊だけを引く(`Fetching 2 books`)。取得済みの本を引き直さない。
+- 取得後の `status` に `Bib status: found: 3`、`Bib status: not_found: 1`、`Bib match: edition: 3`、`Last enrich` が出る。
+- `v_books` の `B00W535LOU` は `isbn = 9784822250850`、`paper_issued = 2015-04`、`ndc = 336`、`ndc_label = 経営管理`、`subjects = [経営管理]`。`B088GZFB9Z` は講談社文芸文庫の紙版(`isbn = 9784065190678`)に照合され、1983 年の単行本ではない。`B000NOBOOK` の書誌情報の列は NULL か `[]`。
+- `search 経営管理` は、書名に「経営管理」を含まない `B00W535LOU` を件名で拾う。表に件名の列は出ない。
+
+中断と再開(Ctrl-C):
+
+```bash
+kindb enrich --refresh --db "$BIB_DB"
+# 2 行目が出たところで Ctrl-C
+echo "exit=$?"
+kindb status --db "$BIB_DB"
+```
+
+期待:
+- `Interrupted. Saved the books fetched so far; rerun to resume.` が stderr に出て、`exit=130`。
+- トレースバックは出ない。引き直し済みの本の `Last enrich` が更新され、中断した本の書誌情報は前回のまま残る。
+
+手動訂正と再照合:
+
+```bash
+printf 'asin,isbn\nB088GZFB9Z,\nB000NOBOOK,978-4-8222-5085-0\n' > /tmp/kindb_manual/overrides.csv
+kindb enrich --overrides /tmp/kindb_manual/overrides.csv --db "$BIB_DB"
+kindb query --table "SELECT asin, status, source FROM bib_fetches ORDER BY asin LIMIT 10" --db "$BIB_DB"
+kindb rematch --db "$BIB_DB"
+printf 'asin,isbn\nB000NOBOOK,978-4-8222-5085-1\n' > /tmp/kindb_manual/bad_overrides.csv
+kindb enrich --overrides /tmp/kindb_manual/bad_overrides.csv --db "$BIB_DB"; echo "exit=$?"
+```
+
+期待:
+- `Overrides: 2 rows saved; 1 books reset, 1 books excluded.` が出て、`B000NOBOOK` だけを ISBN で引く(`Fetching 1 books`)。
+- `bib_fetches` で `B088GZFB9Z` は `excluded`、`B000NOBOOK` は `found` で `source = isbn`。
+- `rematch` は `Rematched 3 books: 0 changed, 0 without a match.` を出し、通信しない。
+- 検査数字の誤った ISBN は `Error: line 2: invalid ISBN 978-4-8222-5085-1 for B000NOBOOK` で `exit=1`。保存済みの訂正は変わらない。
+
+`kindb import` が書誌情報に触れないこと:
+
+```bash
+kindb import /tmp/kindb_manual/bib.json --db "$BIB_DB"
+kindb query "SELECT count(*) AS n FROM bib_matches" --db "$BIB_DB"
+```
+
+期待: 取り込み直しても `bib_matches` の件数は変わらない。
 
 ## 9. v0.2 DB マイグレーション
 
@@ -520,7 +590,7 @@ kindb query --table "DESCRIBE v_books" --db /tmp/kindb_manual/v02.duckdb
 
 ```bash
 rm -rf /tmp/kindb_manual
-unset TEST_DB
+unset TEST_DB BIB_DB
 ```
 
 期待:

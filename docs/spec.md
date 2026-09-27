@@ -8,6 +8,7 @@ kindb の現行仕様と、その設計判断の理由をまとめる。DDL と�
 |---|---|---|
 | `kindle.json` | 主データ。蔵書の有無、書名、著者、取得日時、読了マーク、表紙 URL の正とする | `kindb import` |
 | `Kindle.zip` | 任意の補完データ。ジャンル、シリーズ、Amazon 著者 ID、公式著者名 | `kindb import-official` |
+| NDL サーチ | 任意の書誌情報。紙版の件名、NDC、ISBN、刊行年月、出版社、ページ数など(下記「書誌情報」) | `kindb enrich` |
 
 `kindle.json` は Chrome 拡張「Kindle bookshelf exporter」の出力、`Kindle.zip` は Amazon のアカウントサービスからダウンロードする公式アーカイブ。公式 zip は取得に数時間から数日かかるため、鮮度の高い `kindle.json` を正とし、zip 側の取得日時や読了情報は取り込まない。
 
@@ -79,8 +80,8 @@ kindb の現行仕様と、その設計判断の理由をまとめる。DDL と�
 
 | コマンド | 書き換えるテーブル | 触れないテーブル |
 |---|---|---|
-| `kindb import` | `books`, `book_authors`, `import_metadata` | zip 由来の 5 テーブル |
-| `kindb import-official` | `book_genres`, `book_series`, `book_author_ids`, `book_author_names`, `import_metadata_official` | `kindle.json` 由来の 3 テーブル |
+| `kindb import` | `books`, `book_authors`, `import_metadata` | zip 由来の 5 テーブル、`bib_*` |
+| `kindb import-official` | `book_genres`, `book_series`, `book_author_ids`, `book_author_names`, `import_metadata_official` | `kindle.json` 由来の 3 テーブル、`bib_*` |
 
 手順の理由:
 
@@ -104,6 +105,13 @@ kindb の現行仕様と、その設計判断の理由をまとめる。DDL と�
 | `book_author_names` | zip | `(asin, author_order)` | 公式著者名 |
 | `import_metadata_official` | zip | シングルトン | source の絶対パス、`source_type = 'kindle_zip'`、各テーブルの行数、ASIN の和集合の件数、取り込み時刻 |
 | `schema_meta` | kindb | シングルトン | 最後に適用したスキーマのハッシュ(下記「スキーマ移行」) |
+| `bib_fetches` | NDL | `asin` | 取得の状態、検索の元(`title` / `isbn`)、各段の検索条件と総件数(JSON)、通信エラー、取得日時 |
+| `bib_candidates` | NDL | `(asin, candidate_id)` | 検索を止めた段の紙版の候補。検索順位と `<item>` の XML |
+| `bib_matches` | NDL | `asin` | 照合方法、採用した候補 ID の配列、版の属性、NDC と版、照合日時 |
+| `bib_subjects` | NDL | `(asin, subject_order)` | 件名 |
+| `bib_notes` | NDL | `(asin, note_order)` | 注記 |
+| `bib_overrides` | 利用者 | `asin` | 手動訂正の ISBN。NULL は「照合しない」 |
+| `bib_metadata` | kindb | シングルトン | 最後の enrich の開始日時と冊数、最後の rematch の日時と冊数、訂正の CSV のパスと更新日時 |
 
 - zip 由来テーブルには外部キーを付けない。zip にしかない ASIN(個人文書など)も生データとして残し、ビューで除外する。
 - `book_series.series_asin` を抽出できなかった行は、空文字列 `''` を入れる。DuckDB の主キー列には NULL を入れられないため。ビューは `NULLIF(series_asin, '')` で NULL に戻して返す。
@@ -125,8 +133,13 @@ kindb の現行仕様と、その設計判断の理由をまとめる。DDL と�
 | `series_title` / `series_asin` / `series_position` | scalar | NULL | `relation_type = 'PRIMARY'` の行を `series_title`、巻番号(NULL は後)、`series_asin` の順に並べた先頭 1 行から取る |
 | `author_ids` | `VARCHAR[]` | `[]` | `author_order` 順の著者 ID |
 | `author_names_official` | `VARCHAR[]` | `[]` | `author_order` 順の公式著者名(翻訳者などを含む) |
+| `isbn`, `paper_issued`, `publisher`, `pages`, `bib_series` | scalar | NULL | 版の属性。`bib_match` が `edition` か `isbn` の本だけに付く(下記「書誌情報」) |
+| `ndc`, `ndc_label` | scalar | NULL | NDC の記号と、先頭 3 桁の分類名 |
+| `subjects` | `VARCHAR[]` | `[]` | `subject_order` 順の件名 |
+| `bib_notes` | `VARCHAR[]` | `[]` | `note_order` 順の注記 |
+| `bib_match` | scalar | NULL | 照合方法。書誌情報のない本(未取得、見つからないなど)は NULL |
 
-zip 由来の LIST 列は、空配列を明示的に `CAST([] AS VARCHAR[])` で返す。「LIST 列は常に配列、scalar 列は NULL」と利用側が一貫して扱えるようにするため。
+zip 由来と書誌情報の LIST 列は、空配列を明示的に `CAST([] AS VARCHAR[])` で返す。「LIST 列は常に配列、scalar 列は NULL」と利用側が一貫して扱えるようにするため。
 
 ### 集計と展開のビュー
 
@@ -139,6 +152,9 @@ zip 由来の LIST 列は、空配列を明示的に `CAST([] AS VARCHAR[])` で
 | `v_genre_counts` | `genre`, `book_count` | `book_count DESC, genre ASC` | ジャンル別冊数 |
 | `v_book_authors_official` | `asin`, `author_order`, `author_id`, `author_name` | `asin, author_order` | 著者 ID と公式著者名を `(asin, author_order)` で FULL OUTER JOIN。片方しかない順位はもう片方が NULL |
 | `v_author_id_counts` | `author_id`, `author_name`, `book_count` | `book_count DESC, author_name ASC, author_id ASC` | 著者 ID ごとの冊数。同名で別 ID の著者を区別する |
+| `v_ndc_labels` | `ndc3`, `label` | なし | NDC9 の 3 桁の分類記号と分類名(932 行) |
+
+`v_ndc_labels` は、同梱の `src/kindb/data/ndc9_3digit.tsv`(日本図書館協会分類委員会の NDC9 データ、CC BY)を `VALUES` に展開したビュー。テーブルにしないのは、`create_schema()` を冪等な DDL だけに保つため。TSV を差し替えるとビュー定義とハッシュが変わり、読み取り系コマンドで自動的に移行される。TSV は `scripts/build_ndc_table.py` で配布元の `ndc9.ttl` から作る。3 桁の記号を持つ 940 件のうち、別法(`ndcv:Variant`)の 8 件は NDL の書誌で使われないので除く。
 
 `v_author_id_counts.author_name` は、著者 ID ごとに、各本で同じ `author_order` に並ぶ公式著者名を集め、最も多く現れた名前を採る。同数なら辞書順で最小の名前を採る。名前が対応しない本は多数決に入れず、候補が 1 つもない著者 ID だけ `'(unknown)'` にする。
 
@@ -151,8 +167,95 @@ zip 由来の LIST 列は、空配列を明示的に `CAST([] AS VARCHAR[])` で
 - 読み取り系コマンド(`status` / `search` / `query` / `authors` / `recent`)は、`ensure_schema()` を呼んでから読み取り専用で接続する。`ensure_schema()` は、まず読み取り専用で `schema_meta` のハッシュを照合し、一致しないとき(テーブルがない旧版の DB を含む)だけ書き込み接続で `create_schema()` を実行する。DB ファイルがなければ何もせず、「No database found.」のエラーを出す。
 - 書き込み接続を必要なときだけ開くのは、DuckDB では書き込み接続が別プロセスの接続(読み取り専用を含む)と共存できないため。毎回開くと、読み取り系コマンドの並列実行や、MCP サーバの問い合わせとぶつかる。ただし移行が必要な最初の 1 回(kindb の更新後やスキーマ変更後)は書き込み接続を開くので、その瞬間に別の接続があれば衝突しうる。
 - 版をハッシュで表すので、`TABLES_SQL` / `VIEWS_SQL` を変更すれば、次の読み取り系コマンドで自動的に移行される。コメントだけの変更でも 1 回移行が走るが、結果は同じなので害はない。
-- import 系は手順 2 で `create_schema()` を直接呼ぶ。
+- import 系と `enrich` は、書き込み接続を開いた最初に `create_schema()` を直接呼ぶ。
 - 既存テーブルへの列追加や型変更はこの仕組みでは反映されない。必要になったら明示的な移行処理を追加する。
+
+## 書誌情報
+
+`kindb enrich` は、蔵書の各冊を国立国会図書館サーチ(NDL サーチ)の OpenSearch で引き、紙版の書誌を照合して `bib_*` テーブルに保存する。主データや補完データとは出どころの違う情報なので、2 つの import はこれに触れない。書誌情報は刊行後ほぼ変わらず、全冊の取得に数時間かかるため、主データの全件置換のたびに消すべきではない。要件と、規則を決めた経緯(標本 50 冊の測定を含む)は `docs/bibinfo-requirements.md` にある。語の意味は `docs/glossary.md` に従う。
+
+### 検索
+
+- NDL 自身の書誌(`dpid=iss-ndl-opac`)だけを、1 回の最大の `cnt=500` で引く。ほかの提供元の書誌は同じ紙版でも NDC や件名が食い違い、JPRO の電子書籍の書誌は紙版の巻を検索結果から押し出すため。
+- 段は、書名と著者 → 書名だけ → シリーズ名(`v_books.series_title`)と著者、の順。書名は Kindle 書名からレーベル、巻数、版表記、電子書籍だけの版名(モノクロ版など)を除き、記号を空白に置き換えたもの。著者は先頭の 1 名で、空白と中黒で分けた語の AND。
+- 段ごとに、総件数が 500 件以下の応答を「すべて見た」とみなす(段が解消した)。超えたら著者、巻数の語の順に条件を足して引き直し、最後まで超えたらその段は未解消とする。途中の検索が超えたことは段の結論に影響しない。同じ条件の検索は 1 冊の中で 1 回だけ送る。
+- 解消した段で採用条件を満たす候補が 1 件以上あれば、そこで止める。同じ作品の別の巻しか残らなければ次の段へ進む。
+
+### 採用条件と照合
+
+候補は、`<category>` に「図書」と「紙」を持つ NDL の書誌。採用条件は次の 2 つで、著者名は比べない。NDL は `Kahneman, Daniel, 1934-2024`、Kindle は `ダニエル・カーネマン` のように表記が違い、比べると翻訳書が落ちるため。
+
+- 同じ作品を指す。Kindle 書名と候補の書名を同じ規則(NFKC、読みの `(…)` と `《…》` の除去、電子書籍だけの版名と版表記の除去、記号と空白の除去、小文字化)で正規化し、候補の本タイトル、本タイトルと副題の連結、またはそれに巻の副題(`2 (ささやかな戦い)` の「ささやかな戦い」)を足したものが、Kindle 書名と完全に一致する。前方一致や包含は同じ作品とみなさない。叢書名と叢書番号(「谷口ジローコレクション18」)は、候補の `seriesTitle`(`谷口ジローコレクション ; 18`)と照らして書名から除いてから比べる。
+- 巻数が合う。Kindle 書名に巻数があれば、候補の巻の数字(`no.26`、`第1集`、`Vol. 1` などから取る)が一致する。上、中、下、前編、中編、後編も巻として比べる。Kindle 書名に巻数がなければ、巻のない候補か 1 巻の候補だけを採る(巻の副題で一致した候補は除く)。第 1 巻に巻表記がなく続刊にだけ巻数がある本で、続刊を採らないため。`1-3` のような範囲は単独の巻と対応させない。
+
+Kindle 書名の巻数は末尾から、`(25)`、`[2022]`、`(上)`、`10巻`、空白に続く数字、巻の副題の前の数字(`２―ささやかな戦い―`)、ローマ数字、文字の直後の数字(`PART2`)、の順に探し、見つからなければ副題の前の `(上)` や `(2)` を探す。書名の末尾に `v_books.series_title` と同じ語が付いていれば(「星界の断章 Ⅰ 星界シリーズ」)、それを除いてから探す。
+
+採用した候補のうち同じ ISBN のものは 1 つの紙版にまとめる。次に、Kindle 書名末尾の括弧(レーベル)と候補の叢書名が合う候補、Kindle 書名の版表記(新版、第2版など)と候補の版表示が合う候補が一部にだけあれば、その候補に絞る。どの候補にも合わなければ絞らない。叢書名は 3 文字以上で、一方がもう一方を含めば合うとみなす。
+
+| `bib_match` | 条件 | 付ける属性 |
+|---|---|---|
+| `edition` | 紙版が 1 つに定まった | すべて |
+| `work` | 紙版が複数残った | 作品の属性のうち、全候補で一致したものだけ。NDC は記号が一致したとき(版は違ってよい)、件名と注記は全候補に共通するもの。版の属性は付けない |
+| `isbn` | 手動訂正の ISBN で引いた | 当たった紙版の属性。書名は比べない。紙版が複数なら `work` と同じ規則 |
+
+値の形式:
+
+- `isbn`: 13 桁、ハイフンなし。10 桁の ISBN は 978 を付けて検査数字を計算し直す。
+- `paper_issued`: `dcterms:issued` を記載の精度のまま `YYYY`、`YYYY-MM`、`YYYY-MM-DD` にする(`2015.4` は `2015-04`、`[2020]` は `2020`)。存在しない日を補わない。和暦などの解釈できない値は NULL。
+- `publisher`: `dc:publisher` を `, ` で連結したもの。
+- `pages`: `dc:extent` の最後のページ数(`xii, 245 pages` なら 245)。ページ付がなければ NULL。
+- `bib_series`: 先頭の `dcndl:seriesTitle` を原文のまま(`講談社文芸文庫 ; つK1`)。
+- `ndc` / `ndc_edition`: 候補の NDC の記号と版(`10` / `9` / `8`)。1 件に複数あれば新しい版を採る。版の書かれていない記号と、`work` で版がそろわないときの版は NULL。
+- `ndc_label`: `ndc` の先頭 3 桁を NDC9 の表で引いた分類名。10 版の記号も 9 版の表で引く(意味のずれは未確認)。
+- `subjects`: 型のない `dc:subject`。NDLSH とみなしている(SRU の dcndl 形式で 1 件照らした結果に基づく仮定)。マンガにはほとんど付かない。
+- `bib_notes`: `dc:description` から、刊行年だけの値と「出版」「頒布」だけの値を除いたもの(原タイトル、索引あり など)。
+
+### 状態
+
+| `bib_fetches.status` | 意味 | 次の `enrich` での扱い |
+|---|---|---|
+| (行なし) | 未取得 | 引く |
+| `found` | 採用条件を満たす候補が残った段があった | `--refresh` のときだけ引き直す |
+| `not_found` | すべての段が解消し、採用条件を満たす候補がなかった | `--retry-missing` か `--refresh` で引き直す |
+| `incomplete` | 見つからず、未解消の段があった(保留) | 同上 |
+| `excluded` | 手動訂正で ISBN を空にした | 引かない |
+| `error` | 通信に失敗した | 自動で引き直す |
+
+- 候補(`bib_candidates`)は `found` の本だけに持つ。検索を止めた段(ISBN 指定なら ISBN の検索)で返った紙版の候補をすべて、所蔵館へのリンク(`rdfs:seeAlso`)を除いた `<item>` で保存する。照合規則を直したとき、NDL に問い合わせ直さずに再照合できるようにするため。
+- 引き直した本は、状態、候補、照合結果を同じトランザクションで置き換える。引き直しで通信に失敗した本は、前回の状態、候補、照合結果を残す(前回の行がなければ `error` を記録する)。一時的な失敗で書誌情報を失わないため。
+- 蔵書から消えた本の行は残る。ビューと `status` は `books` との結合で除外する。
+
+### 手動訂正
+
+`kindb enrich --overrides <csv>` で、見出し行が `asin,isbn` の CSV を渡す(BOM 付き UTF-8 可、見出しの大文字小文字は問わない)。ISBN は検査数字まで確かめて 13 桁にし、`bib_overrides` に保存する。打ち間違いの ISBN で引くと「見つからない」として残り、気づきにくいため。違反はまとめて 1 つのエラーにし、DB には触れない。蔵書にない ASIN は警告だけ出して保存する。
+
+CSV は保存済みの訂正を全件置き換え、前回と内容が変わった本を次のように扱う。
+
+| 変化 | 扱い |
+|---|---|
+| ISBN を足した、変えた | 状態、候補、照合結果を消して未取得に戻す。次の取得で指定の ISBN で引く |
+| ISBN を空にした | 候補と照合結果を消し、状態を `excluded` にする |
+| 行を消した | 状態、候補、照合結果を消して未取得に戻す。次の取得で書名から引く |
+
+候補まで消すのは、`--where` や `--limit` で引き直されないまま再照合したときに、古い訂正で取った候補から採用し直さないようにするため。訂正を変えられるのは `enrich` だけ。
+
+### 取得の実行
+
+1. 書き込み接続で `create_schema()` を実行し、`--overrides` があれば訂正を置き換える(短いトランザクション)。
+2. 読み取り専用で対象を選ぶ。`v_books` への `--where` で絞り、ASIN の順に並べ、`--limit` 冊までにする。
+3. DB を閉じたまま、直列で 1 件ずつ引く。前回の応答から `--interval` 秒(既定と下限が 3 秒)以上空ける。HTTP 429 は `Retry-After`(なければ 60、120、180 秒)待って 3 回まで再試行する。ほかの HTTP エラーと通信の失敗は、その本を `error` にして次へ進む。
+4. 20 冊ごとに、書き込み接続で `BEGIN` → 対象 ASIN の行を `DELETE` → `INSERT` → `COMMIT` → `CHECKPOINT` を実行する。
+
+- 取得中に DB を開かないのは、数時間の取得の間も、読み取り系コマンドや MCP サーバが DB を開けるようにするため。
+- 書き込みでロックが衝突したら待って再試行する。途中の書き込みは 30 秒で諦め、結果を持ったまま取得を続けて次の書き込みでまとめて書く。最後の書き込みは 300 秒待っても空かなければ、1 行のエラーで終わる(その回の未保存の結果は失われ、次の実行で引き直される)。
+- Ctrl-C を受けたら、取得済みの結果を書いてから終了コード 130 で終わる。次の実行は、書き込んだところから再開する。
+- 5 冊続けて通信に失敗したら、取得を止めて終了コード 1 で終わる。回線や取得先の障害で全冊を `error` にしないため。
+- 3 秒間隔は標本測定の実測値による。1.2 秒間隔では約 20 件目で HTTP 429 が返った。NDL の API 仕様書(第 1.4 版)に OpenSearch のアクセス間隔の定めは見当たらない。
+- User-Agent は `kindb/<版> (+https://github.com/tenkao/kindb)`。
+
+### 再照合
+
+`kindb rematch` は、状態が `found` の本について、保存済みの候補と保存済みの訂正だけで照合をやり直す。通信せず、訂正も変えない。直せるのは保存済みの候補の中での判定だけで、検索の段や条件の修正は `enrich --refresh` で引き直さないと反映されない。採用できる候補がなくなった本は照合結果を消し、状態は `found` のままにする。`status` の `Bib found, unmatched` の行に件数が出るので、`enrich --refresh` で引き直す。
 
 ## CLI
 
@@ -162,8 +265,10 @@ DB パスは、`--db` → 環境変数 `KINDB_DB_PATH` → `~/.kindb/kindle.duck
 
 | コマンド | 仕様 |
 |---|---|
-| `status` | 最終取り込み日時、source、冊数、著者数、`read_status` ごとの冊数(値を固定せず GROUP BY で列挙)、表紙 URL がある冊数。zip 取り込み済みなら公式 import の情報も表示する |
-| `search <term>` | `v_books` の `title` / `authors_text` / `asin` / `read_status` を ILIKE で検索する。`%` `_` `\` はエスケープする。並びは `title, asin`。`-n` 件(既定 50、`0` で全件)まで表示し、最後に表示件数と総件数を出す。表紙 URL は出さない |
+| `status` | 最終取り込み日時、source、冊数、著者数、`read_status` ごとの冊数(値を固定せず GROUP BY で列挙)、表紙 URL がある冊数。zip 取り込み済みなら公式 import の情報も表示する。書誌情報は、未取得の冊数、取得の状態ごとと照合方法ごとの冊数、`found` なのに照合結果のない冊数(あれば)、訂正の件数(あれば)、最後の enrich と rematch の日時を表示する。いずれも現役の蔵書だけを数える |
+| `enrich` | 下記「書誌情報」の取得。`--where`(`v_books` への条件)、`--limit`(今回の冊数、`0` で上限なし)、`--overrides <csv>`、`--retry-missing`、`--refresh`、`--interval`(既定 3、下限 3)。1 冊ごとに `[i/n] <ASIN> <状態> (<照合方法>) <書名>` を 1 行出し、最後に状態ごとの冊数を出す。Ctrl-C は終了コード 130 |
+| `rematch` | 下記「再照合」。対象の冊数、照合結果が変わった冊数、採用できる候補がなくなった冊数を出す |
+| `search <term>` | `v_books` の `title` / `authors_text` / `asin` / `read_status` と、書誌情報の件名(`bib_subjects`)を ILIKE で検索する。件名の列は表に出さない。80 桁の表で書名がさらに細く折り返されるため。`%` `_` `\` はエスケープする。並びは `title, asin`。`-n` 件(既定 50、`0` で全件)まで表示し、最後に表示件数と総件数を出す。表紙 URL は出さない |
 | `query <sql>` | 下記「query の制約」を参照 |
 | `authors` | `v_author_counts` を `-n` 件(既定 50、`0` で全件)まで表示し、最後に表示件数と総件数を出す |
 | `recent` | `acquired_at DESC, asin DESC` で `-n` 件(既定 20 件)。表紙 URL は出さない |
@@ -189,7 +294,7 @@ LIMIT を必須にした理由は、AI が一覧を取るときに、件数を�
 
 次の項目は保存せず、問い合わせにも答えない。
 
-- 発売日、出版社、購入価格(zip に価格列はあるが取り込まない)
+- Kindle 版の発売日、購入価格(zip に価格列はあるが取り込まない)。書誌情報の `paper_issued` は紙版の刊行年月で、Kindle 版の発売日ではない
 - Kindle Unlimited かどうか、購入経路
 - マンガかどうか、固定レイアウトかどうか
 - 読書セッション、取り込み履歴、差分

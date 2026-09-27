@@ -15,8 +15,10 @@ import pytest
 from typer.testing import CliRunner
 
 from kindb.cli import app
+from kindb.enrich import run_enrich
 from kindb.importer import import_official_zip
 from tests.create_official_fixture import create_official_zip
+from tests.ndl_fixtures import FakeOpenSearch, item_xml, rss
 
 SKILL_MD = Path(__file__).resolve().parent.parent / "SKILL.md"
 # 手順の箇条書きの中にある、字下げされたブロックも拾う
@@ -45,6 +47,17 @@ def test_every_sql_block_in_skill_md_is_checked() -> None:
 @pytest.fixture
 def library(imported_db: Path, tmp_path: Path) -> Path:
     import_official_zip(create_official_zip(tmp_path / "Kindle.zip"), imported_db)
+    # 件名、NDC、刊行年、出版社の例が空の結果で通ってしまわないよう、書誌情報を 1 冊に付ける
+    ndl = FakeOpenSearch(
+        [
+            (
+                {"title": "テストの本", "creator": "山田太郎"},
+                rss([item_xml("R100000002-I000000001", "テストの本", isbn="978-4-06-519067-8", ndc=("10", "336"),
+                              subjects=("経営管理",), publishers=("講談社",), issued="2020.4")]),
+            )
+        ]
+    )
+    run_enrich(imported_db, ndl.client())
     return imported_db
 
 
@@ -52,4 +65,7 @@ def library(imported_db: Path, tmp_path: Path) -> Path:
 def test_skill_md_sql_example_runs_via_kindb_query(library: Path, sql: str) -> None:
     result = runner.invoke(app, ["query", sql, "--db", str(library)])
     assert result.exit_code == 0, result.stderr
-    assert isinstance(json.loads(result.stdout), list)
+    rows = json.loads(result.stdout)
+    assert isinstance(rows, list)
+    if any(column in sql for column in ("subjects", "ndc_label", "paper_issued")) and "B000000000" not in sql:
+        assert rows, "書誌情報の例は fixture で 1 行以上返るはず"

@@ -1,11 +1,11 @@
 ---
 name: kindb
-description: Kindle 蔵書 DB(kindb)の検索と集計。Kindle の本や蔵書について、書名や著者での検索、著者別・ジャンル別・シリーズ別の冊数、読了マーク、最近取得した本を聞かれたときに使う。
+description: Kindle 蔵書 DB(kindb)の検索と集計。Kindle の本や蔵書について、書名や著者での検索、著者別・ジャンル別・シリーズ別の冊数、読了マーク、最近取得した本、件名や NDC 分類、紙版の出版社や刊行年を聞かれたときに使う。
 ---
 
 # kindb
 
-kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB。主データは `kindle.json`(書名、著者、取得日時、読了マーク、表紙 URL)で、公式 `Kindle.zip` を取り込んでいればジャンル、シリーズ、Amazon 著者 ID も使える。問い合わせは読み取りだけを行う。
+kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB。主データは `kindle.json`(書名、著者、取得日時、読了マーク、表紙 URL)で、公式 `Kindle.zip` を取り込んでいればジャンル、シリーズ、Amazon 著者 ID も使える。`kindb enrich` を実行していれば、国立国会図書館サーチ(NDL サーチ)の書誌情報(件名、NDC、紙版の ISBN、刊行年月、出版社、ページ数)も使える。問い合わせは読み取りだけを行う。
 
 ## 問い合わせの経路
 
@@ -16,7 +16,7 @@ kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB�
 
 - CLI の `kindb query` は、`SELECT` / `WITH` の末尾に `LIMIT` がないと拒否する(集計関数だけの SELECT は除く)。拒否されたら `LIMIT` を足して再実行する。
 - CLI の DB は既定で `~/.kindb/kindle.duckdb`。`--db <path>` か環境変数 `KINDB_DB_PATH` で変えられる。
-- `kindb search <語>` は書名、著者、ASIN、`read_status` の部分一致を、既定で 50 件まで表で返す。最後の行の `Showing 50 of 1198 results` のように総件数が表示件数より多ければ、下の検索クエリで件数を数えてからページングする。
+- `kindb search <語>` は書名、著者、ASIN、`read_status`、件名の部分一致を、既定で 50 件まで表で返す。最後の行の `Showing 50 of 1198 results` のように総件数が表示件数より多ければ、下の検索クエリで件数を数えてからページングする。
 
 ## 手順
 
@@ -26,13 +26,14 @@ kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB�
    SELECT
      (SELECT count(*) FROM books) AS books,
      (SELECT max(imported_at) FROM import_metadata) AS imported_at,
-     (SELECT count(*) FROM import_metadata_official) > 0 AS has_official
+     (SELECT count(*) FROM import_metadata_official) > 0 AS has_official,
+     (SELECT count(*) FROM v_books WHERE bib_match IS NOT NULL) AS with_bibinfo
    LIMIT 1;
    ```
 
    MCP でこのクエリがテーブルの欠落で失敗したら、DB が未作成か古い版のスキーマのまま。利用者に CLI で `kindb import <kindle.json>`(未作成のとき)か `kindb status`(スキーマを更新する)を一度実行してもらう。
 
-2. **ビューを選ぶ。** 下の「ビュー」から選ぶ。ジャンル、シリーズ、著者 ID が必要なのに公式データがない場合は、`kindb import-official <Kindle.zip>` での取り込みが必要だと伝える。
+2. **ビューを選ぶ。** 下の「ビュー」から選ぶ。ジャンル、シリーズ、著者 ID が必要なのに公式データがない場合は、`kindb import-official <Kindle.zip>` での取り込みが必要だと伝える。件名、NDC、出版社などが必要なのに書誌情報がない(`with_bibinfo` が 0)場合は、`kindb enrich` での取得が必要だと伝える。
 3. **件数を数えてから取得する。** 一覧は `count(*)` で総数を確かめ、`LIMIT n OFFSET m` でページごとに取る。`ORDER BY` の最後には一意になる列(`v_books` なら `asin`)を置く。すべてを答えるときは、取得した行数が総数に一致するまで `OFFSET` を進める。
 4. **回答する。** 下の「回答の表現」に従う。
 
@@ -42,8 +43,13 @@ kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB�
 
 - `read_status = 'READ'` は、利用者が Kindle で付けた読了マーク。`'UNKNOWN'` は「読了マークが付いていない本」と表現する。読みかけでもマークを付けなければ `UNKNOWN` のままなので、未読とは限らない。「未読の本」を聞かれたら `UNKNOWN` で引き、この表現で答える。
 - `acquired_at` は「ライブラリに入った日時」と表現する。再ダウンロードなどで更新されるため、購入日を聞かれたら目安として示す。値は UTC なので、日本時間の日付や年で集計するときは `acquired_at + INTERVAL 9 HOUR` を使う。
-- 発売日、出版社、価格、Kindle Unlimited かどうか、購入経路、マンガや固定レイアウトかどうかを聞かれたら、kindb のデータには含まれないと答える。
+- Kindle 版の発売日、価格、Kindle Unlimited かどうか、購入経路、マンガや固定レイアウトかどうかを聞かれたら、kindb のデータには含まれないと答える。
 - ジャンルとシリーズは Amazon 公式データ由来と添える。
+- 件名、NDC、ISBN、刊行年月、出版社、ページ数は NDL サーチの紙版の書誌由来と添える。Kindle 版そのものの情報ではない。
+- `paper_issued` は「紙版の刊行年月」と表現する。発売日を聞かれたら、Kindle 版の発売日はないと断ったうえで、目安として示す。
+- `bib_match` が NULL の本には書誌情報がない(未取得、NDL で見つからない、照合を止めた)。「該当なし」ではなく「書誌情報がない」と答える。
+- `bib_match = 'work'` の本は、紙版(単行本と文庫など)が 1 つに定まらず、ISBN、刊行年月、出版社、ページ数、`bib_series` は NULL。件名と NDC はある。
+- 件名はマンガにはほとんど付かないので、件名で探すときは書名での検索も併せて使う。
 
 ## ビュー
 
@@ -62,6 +68,13 @@ kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB�
 | `series_title` / `series_asin` / `series_position` | シリーズ名、シリーズ ASIN、巻番号。ない本は NULL |
 | `author_ids` | Amazon 著者 ID の配列。ない本は `[]` |
 | `author_names_official` | 公式の著者名の配列(翻訳者などを含む)。ない本は `[]` |
+| `subjects` | 件名(国立国会図書館件名標目)の配列。特定の件名は `list_contains(subjects, '思考')`、部分一致は `array_to_string(subjects, ' ') ILIKE '%語%'`。ない本は `[]` |
+| `ndc` / `ndc_label` | NDC の分類記号(`913.6` など)と、先頭 3 桁の分類名(`小説．物語` など、全角の区切り)。ない本は NULL |
+| `isbn` | 紙版の ISBN(13 桁、ハイフンなし)。紙版が 1 つに定まった本だけ |
+| `paper_issued` | 紙版の刊行年月。`2015-04` や `2015` のように記載の精度のまま。年で絞るときは `paper_issued LIKE '2015%'` |
+| `publisher` / `pages` / `bib_series` | 紙版の出版社(複数は `, ` 区切り)、ページ数、叢書名(`講談社文芸文庫 ; つK1` など) |
+| `bib_notes` | 注記の配列(`原タイトル: …` など)。ない本は `[]` |
+| `bib_match` | 書誌情報の照合方法。`edition`(紙版が 1 つ)、`work`(紙版が複数で、作品の属性だけ)、`isbn`(利用者が ISBN を指定)。書誌情報のない本は NULL |
 
 ### その他のビュー
 
@@ -76,8 +89,9 @@ kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB�
 | `v_book_series` | `series_asin`, `series_title`, `series_position`, `asin`, `title`, `relation_type` | `series_title, series_position NULLS LAST, asin, series_asin, relation_type` | シリーズ内の本を巻順に見る |
 | `v_author_id_counts` | `author_id`, `author_name`, `book_count` | `book_count DESC, author_name, author_id` | 同名で別人の著者を区別した冊数 |
 | `v_book_authors_official` | `asin`, `author_order`, `author_id`, `author_name` | `asin, author_order` | 本ごとの公式著者 ID と著者名 |
+| `v_ndc_labels` | `ndc3`, `label` | `ndc3` | NDC の 3 桁の分類記号と分類名の対応表 |
 
-`v_author_counts` 以外の上表のビューは公式データ由来で、未取り込みなら 0 行になる。
+`v_author_counts` と `v_ndc_labels` 以外の上表のビューは公式データ由来で、未取り込みなら 0 行になる。
 
 ## 代表クエリ
 
@@ -188,11 +202,43 @@ ORDER BY b.acquired_at DESC, b.asin DESC
 LIMIT 50 OFFSET 0;
 ```
 
+件名で探す(件名のない本は書名でも探す):
+
+```sql
+SELECT asin, title, authors_text, subjects, ndc_label
+FROM v_books
+WHERE array_to_string(subjects, ' ') ILIKE '%経営%' OR title ILIKE '%経営%'
+ORDER BY title, asin
+LIMIT 50 OFFSET 0;
+```
+
+NDC の分類別の冊数:
+
+```sql
+SELECT ndc_label, count(*) AS books
+FROM v_books
+WHERE ndc_label IS NOT NULL
+GROUP BY ndc_label
+ORDER BY books DESC, ndc_label
+LIMIT 20;
+```
+
+紙版の刊行年と出版社で絞る(紙版が 1 つに定まった本だけが対象):
+
+```sql
+SELECT asin, title, publisher, paper_issued, pages
+FROM v_books
+WHERE paper_issued LIKE '2020%' AND publisher ILIKE '%講談社%'
+ORDER BY paper_issued, asin
+LIMIT 50 OFFSET 0;
+```
+
 1 冊の詳細(表紙 URL を含む):
 
 ```sql
 SELECT asin, title, authors, read_status, acquired_at, product_image_url,
-       genres, series_title, series_position
+       genres, series_title, series_position,
+       bib_match, isbn, paper_issued, publisher, pages, ndc, ndc_label, subjects, bib_notes
 FROM v_books
 WHERE asin = 'B000000000'
 LIMIT 1;

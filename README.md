@@ -1,8 +1,8 @@
 # kindb
 
-Chrome 拡張「[Kindle bookshelf exporter](https://chromewebstore.google.com/detail/kindle-bookshelf-exporter/olimpmeljimffgjonlpmiaebaonnegdp)」で取得した Kindle 蔵書データ `kindle.json` を DuckDB に取り込み、Claude Code や Claude Desktop から検索・集計するツール。Amazon 公式の `Kindle.zip` を追加で取り込むと、ジャンル、シリーズ、Amazon 著者 ID も使える。
+Chrome 拡張「[Kindle bookshelf exporter](https://chromewebstore.google.com/detail/kindle-bookshelf-exporter/olimpmeljimffgjonlpmiaebaonnegdp)」で取得した Kindle 蔵書データ `kindle.json` を DuckDB に取り込み、Claude Code や Claude Desktop から検索・集計するツール。Amazon 公式の `Kindle.zip` を追加で取り込むと、ジャンル、シリーズ、Amazon 著者 ID も使える。国立国会図書館サーチ(NDL サーチ)から紙版の書誌情報(件名、NDC、ISBN、刊行年月、出版社など)を取得して付けることもできる。
 
-- ローカルで完結する(外部 API への通信なし)
+- 取り込みと問い合わせはローカルで完結する。通信するのは、任意の書誌情報の取得(`kindb enrich`)だけ
 - Claude Code からは CLI(`kindb query`)で、Claude Desktop からは MCP サーバ(`mcp-server-motherduck`)で DB を問い合わせる
 - 問い合わせ方を Claude に教える Skill(`SKILL.md`)を同梱
 
@@ -61,6 +61,25 @@ kindb authors         # 著者別の冊数(既定 50 人、-n で変更、-n 0 �
 kindb recent          # 最近ライブラリに入った本(既定 20 冊、-n で変更)
 ```
 
+### 書誌情報を付ける(任意)
+
+```bash
+# 非マンガから取得する(件名が付くのはほぼ非マンガのため)。まず 50 冊で試す
+kindb enrich --where "NOT list_contains(genres, 'コミック・ラノベ・BL')" --limit 50
+kindb enrich                        # 残りの全冊。何度実行しても、取得済みの本は飛ばして続きから引く
+kindb enrich --retry-missing        # 見つからなかった本と、保留した本も引き直す
+kindb status                        # 取得の状態ごとの冊数(Bib ...)
+```
+
+蔵書の 1 冊ずつを書名と著者で NDL サーチに問い合わせ、紙版の書誌に照合して保存する。誤った書誌情報を付けるより何も付けないことを選ぶ規則なので、見つからない本も出る。問い合わせは 3 秒以上の間隔で 1 本ずつ送るため、全冊には数時間かかる(1 冊あたり 1〜6 回問い合わせる)。取得中も DB は開いたままにしないので、`kindb query` や Claude Desktop からの問い合わせと並行できる。Ctrl-C で止めても、次の実行が続きから再開する。
+
+- `--where` は `v_books` への SQL の条件で、対象の本を絞る。`--limit` は今回の冊数の上限。
+- `--refresh` は、状態によらず対象の本を引き直す(照合の規則が変わったあとなど)。
+- 照合を誤った本や、見つからなかった大事な本は、`asin,isbn` の見出しを持つ CSV を `kindb enrich --overrides <csv>` で渡して訂正する。ISBN を指定した本は書名でなく ISBN で引き、ISBN を空にした本は照合しない。CSV は前回の訂正を全件置き換える。
+- `kindb rematch` は、保存済みの候補から照合だけをやり直す(通信しない)。
+
+NDL サーチには、蔵書の書名、先頭の著者名、訂正で指定した ISBN を送る。1 冊ずつの問い合わせでも、全体としては蔵書の一覧に近い情報が送られる。規則と状態の詳細は [`docs/spec.md`](docs/spec.md) の「書誌情報」を参照。
+
 ### SQL で問い合わせる
 
 ```bash
@@ -85,7 +104,8 @@ kindb delete --yes    # 確認なし
 
 - `read_status = 'READ'` は、Kindle で付けた読了マーク。`UNKNOWN` は読了マークがないことだけを表し、未読とは限らない。
 - `acquired_at` はライブラリに入った日時(UTC)。再ダウンロードなどで更新されるため、購入日とは限らない。
-- 発売日、出版社、価格、Kindle Unlimited かどうか、購入経路、マンガかどうかは保存しない。公式 zip に価格の列はあるが取り込まない。
+- 書誌情報(`subjects`、`ndc`、`isbn`、`paper_issued`、`publisher` など)は NDL サーチの紙版の書誌で、Kindle 版のものではない。紙版が 1 つに定まらなかった本(`bib_match = 'work'`)には、件名と NDC だけが付く。
+- Kindle 版の発売日、価格、Kindle Unlimited かどうか、購入経路、マンガかどうかは保存しない。公式 zip に価格の列はあるが取り込まない。
 
 ## Claude から使う
 
@@ -140,7 +160,7 @@ ln -s "$(pwd)/SKILL.md" ~/.claude/skills/kindb/SKILL.md
    Skill を使えない環境では、会話の最初に次の文を貼る。
 
    ```
-   kindb(Kindle 蔵書 DB)を使う。本の一覧は v_books、著者別の冊数は v_author_counts を使う。一覧は count(*) で総数を確かめてから LIMIT/OFFSET でページングし、ORDER BY の最後に asin などの一意な列を置く。read_status = 'UNKNOWN' は「読了マークが付いていない本」と表現する。
+   kindb(Kindle 蔵書 DB)を使う。本の一覧は v_books、著者別の冊数は v_author_counts を使う。一覧は count(*) で総数を確かめてから LIMIT/OFFSET でページングし、ORDER BY の最後に asin などの一意な列を置く。read_status = 'UNKNOWN' は「読了マークが付いていない本」と表現する。v_books の subjects(件名の配列)、ndc_label、publisher、paper_issued は NDL サーチの紙版の書誌由来で、bib_match が NULL の本には書誌情報がない。
    ```
 
 ## 開発
@@ -149,7 +169,9 @@ ln -s "$(pwd)/SKILL.md" ~/.claude/skills/kindb/SKILL.md
 uv run ruff check . && uv run pytest
 ```
 
-テスト用の最小 `kindle.json` と `Kindle.zip` は `tests/create_fixture.py` と `tests/create_official_fixture.py` が動的に生成する。実機での確認手順は [`docs/manual-test-scenarios.md`](docs/manual-test-scenarios.md) にある。
+テスト用の最小 `kindle.json` と `Kindle.zip` は `tests/create_fixture.py` と `tests/create_official_fixture.py` が動的に生成する。NDL サーチの応答の形は、`tests/fixtures/ndl/` に置いた実際の応答 3 件に合わせている。テストは NDL サーチに通信しない。
+
+NDC の分類名の表(`src/kindb/data/ndc9_3digit.tsv`)を作り直すときは、日本図書館協会の[配布ページ](https://www.jla.or.jp/committees/bunrui/ndc-data/)から `ndc9.zip` を取得し、展開した `ndc9.ttl` をリポジトリの外に置いて `uv run python scripts/build_ndc_table.py <ndc9.ttl のパス> > src/kindb/data/ndc9_3digit.tsv` を実行する。実機での確認手順は [`docs/manual-test-scenarios.md`](docs/manual-test-scenarios.md) にある。
 
 ### 依存更新の手順
 
@@ -175,6 +197,11 @@ uv lock --upgrade \
 - [`SKILL.md`](SKILL.md): Claude 向けの問い合わせ手順、ビュー、代表クエリ
 - [`docs/manual-test-scenarios.md`](docs/manual-test-scenarios.md): 実機での確認手順
 
+## 出典
+
+- `kindb enrich` は国立国会図書館サーチ(NDL サーチ)の API を用いている。取得した国立国会図書館の書誌データ(データプロバイダ `iss-ndl-opac`)は、照合して項目を選び、形式を整えて(刊行年月、ISBN、ページ数など)保存する。このデータの利用条件は、NDL サーチの[データプロバイダ一覧](https://ndlsearch.ndl.go.jp/help/api/provider)で CC BY(国立国会図書館が作成する書誌データの二次利用条件は CC BY 4.0 と互換)とされている。`tests/fixtures/ndl/` の XML も同じ API の応答である。
+- NDC の分類名の表は、日本図書館協会分類委員会が CC BY で公開している NDC9 のデータ(`ndc9.ttl`)から、3 桁の分類記号と分類名を抜き出して作った。
+
 ## ライセンス
 
-MIT
+MIT(上記の出典のデータを除く)
