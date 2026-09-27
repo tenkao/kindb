@@ -8,6 +8,8 @@ kindb は、Chrome 拡張で取得した `kindle.json`(主データ)と、任意
 - `SKILL.md`: 蔵書を問い合わせる AI 向けの手順と代表クエリ。`~/.claude/skills/kindb/SKILL.md` にシンボリックリンクされ、Claude アプリにも単体でアップロードされる。リポジトリの外で読まれるため、この 1 ファイルだけで完結させる。
 - `README.md`: 利用者向けのインストール、CLI、MCP の設定。
 - `docs/manual-test-scenarios.md`: 実機での確認手順。CLI の出力や import の挙動を変えたら通す。
+- `docs/glossary.md`: 用語集。仕様や会話で語の意味が揺れたら、ここに合わせるか、ここを直す。
+- `docs/bibinfo-requirements.md` / `docs/bibinfo-plan.md`: NDL の書誌情報を追加する機能の要件と実装計画。実装後、確定した仕様は `docs/spec.md` に移す。
 
 ## コード構成
 
