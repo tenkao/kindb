@@ -1,6 +1,6 @@
 """NDL サーチの応答を組み立てるテスト用の関数と、通信しない OpenSearch の偽物。
 
-実際の応答の形は tests/fixtures/ndl/ にある NDL サーチの応答(国立国会図書館、PDL1.0)に合わせている。
+実際の応答の形は tests/fixtures/ndl/ にある NDL サーチの応答(国立国会図書館蔵書、CC BY)に合わせている。
 """
 
 from __future__ import annotations
