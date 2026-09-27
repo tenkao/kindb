@@ -10,6 +10,7 @@ import pytest
 
 from kindb.matching import (
     Book,
+    _label_matches,
     clean_notes,
     decide_isbn_match,
     decide_match,
@@ -418,17 +419,14 @@ def test_trailing_number_is_read_as_part_of_the_title_only_when_no_volume_matche
     assert match is not None and match.candidate_ids == ("R100000002-I000000002",)
 
 
-def test_volume_subtitle_absent_from_ndl_matches_only_when_nothing_else_does() -> None:
+def test_volume_subtitle_absent_from_ndl_is_not_matched() -> None:
+    # NDL が巻の副題を持たない本(災悪のアヴァロン 3)は採らない。小説の巻がまだ NDL にないと、副題のない同名の
+    # コミカライズの同じ巻を採ってしまうため
     book = _book("【電子版限定特典付き】災悪のアヴァロン 3 ～悪役デブだった俺、クラス対抗戦で影に徹していたら、"
                  "なぜか伝説のラスボスとガチバトルになった件～ (ＨＪノベルス)")
-    novel = record("R100000002-I032796961", "災悪のアヴァロン", volume="3", series=("HJ NOVELS ; HJN68-03",))
-    # 副題を持つ同名のコミカライズは採らない
-    comic = record("R100000002-I033374591", "災悪のアヴァロン : ゲーム最弱の悪役デブに転移したけど", volume="3",
-                   series=("ヤングジャンプコミックス",))
-    assert not is_adoptable(book, novel)
-    match = decide_match(book, [novel, comic])
-    assert match is not None and match.candidate_ids == ("R100000002-I032796961",)
-    # 巻の副題まで一致する紙版があれば、副題のない同名の本は採らない(「星界の紋章」のコミカライズ)
+    comic = record("R100000002-I1", "災悪のアヴァロン", volume="3", series=("ヤングジャンプコミックス",))
+    assert decide_match(book, [comic]) is None
+    # 巻の副題まで一致する紙版があれば採る。副題のない同名の本は採らない(「星界の紋章」のコミカライズ)
     seikai = _book("星界の紋章　２―ささやかな戦い―")
     novel_2 = record("R100000002-I000002498252", "星界の紋章", volume="2 (ささやかな戦い)")
     comic_2 = record("R100000002-I025412419", "星界の紋章", volume="2", series=("METEOR COMICS",))
@@ -556,3 +554,90 @@ def test_trailing_roman_x_can_be_part_of_the_title() -> None:
 def test_series_stage_adds_the_volume_word_when_over_the_limit() -> None:
     stages = search_stages(Book("B1", "理想のヒモ生活(25)", "日月 ネコ", "理想のヒモ生活"))
     assert stages[2].refinements == ({"title": "理想のヒモ生活 25", "creator": "日月 ネコ"},)
+
+
+# --- 2 回目のレビューで見つかった誤照合の形 --------------------------------------------------------------
+
+
+def test_wave_dash_and_long_vowel_mark_are_the_same() -> None:
+    # NDL は通常の巻を「ぬーべー」、文庫の再刊を「ぬ～べ～」と書く。長音符を残すと文庫の巻だけが一致する
+    book = _book("地獄先生ぬ～べ～ 7 (ジャンプコミックスDIGITAL)")
+    comics = record("R100000002-I1", "地獄先生ぬーべー", volume="7", series=("ジャンプ・コミックス",))
+    bunko = record("R100000002-I2", "地獄先生ぬ～べ～", volume="7", series=("集英社文庫 : コミック版",))
+    match = decide_match(book, [comics, bunko])
+    assert match is not None and (match.method, match.candidate_ids) == ("edition", ("R100000002-I1",))
+
+
+def test_volume_paren_followed_by_a_removed_digital_marker() -> None:
+    parsed = parse_kindle_title("【愛蔵版】新世紀エヴァンゲリオン（４）〈電子特別版〉 (カドカワデジタルコミックス)")
+    assert (parsed.key, parsed.volume, parsed.editions) == ("新世紀エヴァンゲリオン", "4", ("愛蔵版",))
+
+
+def test_unread_volume_paren_is_kept_in_the_key() -> None:
+    # 巻数として読める括弧を書名から消すと、巻数のない本として 1 巻と一致する
+    assert not is_adoptable(_book("竜馬がゆく(3)新装版 決定稿"), record(title="竜馬がゆく", volume="1"))
+
+
+def test_lone_special_edition_is_not_the_edition_of_a_plain_kindle_title() -> None:
+    book = _book("蟲師（８） (アフタヌーンコミックス)")
+    aizoban = record("R100000002-I1", "蟲師", volume="8", edition="愛蔵版", series=("KCDX ; 3588",),
+                     isbn="978-4-06-376988-3", ndc=("9", "726.1"))
+    match = decide_match(book, [aizoban])
+    assert match is not None
+    assert (match.method, match.isbn, match.ndc) == ("work", None, "726.1")
+
+
+@pytest.mark.parametrize(
+    "kindle_title", ["攻殻機動隊（１．５）", "竜馬がゆく (弐)", "竜馬がゆく (其の二)", "竜馬がゆく (第三話)"]
+)
+def test_numeric_parens_that_are_not_a_single_volume_match_no_volume(kindle_title: str) -> None:
+    title = kindle_title.split(" ")[0].split("（")[0]
+    candidates = [record("R100000002-I0", title), *_volumes(title)]
+    assert decide_match(_book(kindle_title), candidates) is None
+
+
+def test_kanji_episode_number_is_a_split_edition() -> None:
+    assert parse_kindle_title("竜馬がゆく 【第三話】").split_edition
+
+
+@pytest.mark.parametrize("kindle_title", ["竜馬がゆく (新装版)", "竜馬がゆく【改訂第2版】", "竜馬がゆく【第二版】"])
+def test_edition_statements_in_brackets_and_parentheses_are_recorded(kindle_title: str) -> None:
+    old = record("R100000002-I1", "竜馬がゆく", isbn="978-4-16-710567-4", issued="1998.9")
+    match = decide_match(_book(kindle_title), [old])
+    assert match is not None and (match.method, match.isbn) == ("work", None)
+
+
+def test_edition_statement_matches_only_the_same_edition() -> None:
+    book = _book("新版　マーケティングの基本")
+    old = record("R100000002-I1", "マーケティングの基本", isbn="978-4-534-04548-9")
+    revised = record("R100000002-I2", "マーケティングの基本", edition="改訂新版", isbn="978-4-534-00002-8")
+    match = decide_match(book, [old, revised])
+    assert match is not None and match.method == "work"
+
+
+def test_label_does_not_match_a_shorter_series_of_another_imprint() -> None:
+    book = _book("長いお別れ (ハヤカワ・ミステリ文庫)")
+    pocket = record("R100000002-I1", "長いお別れ", series=("ハヤカワ・ミステリ ; 1234",), isbn="4-15-000123-4")
+    hardcover = record("R100000002-I2", "長いお別れ", isbn="4-15-200123-5")
+    assert decide_match(book, [pocket, hardcover]).method == "work"
+    # DIGITAL のような付け足しは同じ叢書として扱う
+    assert _label_matches("ジャンプコミックスDIGITAL", record(series=("ジャンプ・コミックス",)))
+
+
+def test_novelization_does_not_share_the_manga_title() -> None:
+    book = _book("エマ 1巻 (HARTA COMIX)")
+    novel = record("R100000002-I1", "エマ : 小説", volume="1", series=("ファミ通文庫",))
+    manga = record("R100000002-I2", "エマ", volume="1", series=("Beam comix",))
+    match = decide_match(book, [novel, manga])
+    assert match is not None and match.candidate_ids == ("R100000002-I2",)
+
+
+def test_whole_title_reading_does_not_take_volume_1_of_a_sequel() -> None:
+    candidates = [record("R100000002-I1", "ドラゴン桜", volume="1"), record("R100000002-I2", "ドラゴン桜2", volume="1")]
+    assert decide_match(_book("ドラゴン桜 2"), candidates) is None
+
+
+def test_unicode_roman_numerals_match_ascii_roman_in_ndl_titles() -> None:
+    book = _book("ファイナルファンタジーⅦ アルティマニア")
+    assert is_adoptable(book, record(title="ファイナルファンタジーVIIアルティマニア"))
+    assert is_adoptable(book, record(title="ファイナルファンタジーⅦアルティマニア"))
