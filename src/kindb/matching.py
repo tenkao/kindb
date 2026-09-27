@@ -18,6 +18,12 @@ NDL_RECORD_PREFIX = "R100000002-"
 
 # 巻数として扱う語。「ファスト&スロー(上)」の「上」など
 VOLUME_WORDS = ("上", "中", "下", "前編", "中編", "後編")
+# 「上巻」は「上」と同じ巻として比べる。Kindle と NDL で片方だけが「巻」を付けることがある
+_VOLUME_WORD_ALIASES = {"上巻": "上", "中巻": "中", "下巻": "下"}
+# Ⅰ〜Ⅻ と ⅰ〜ⅻ。NFKC は「III」のような英字に変え、「星界の戦旗Ⅲ」の巻数が書名の一部に残るので、先に数字にする
+_ROMAN_NUMERAL_CHARS = str.maketrans(
+    {chr(0x2160 + i): str(i + 1) for i in range(12)} | {chr(0x2170 + i): str(i + 1) for i in range(12)}
+)
 
 # 紙版にない電子書籍だけの版名。長いものを先に置き、「フルカラー版」から「カラー版」だけを消さないようにする
 _DIGITAL_ONLY = re.compile(
@@ -29,31 +35,36 @@ _BRACKET_LABELLIKE = re.compile(r"(版|連載|分冊|単話|特典|期間限定|
 _EDITION_TOKEN = re.compile(
     r"^(新版|改訂新版|増補改訂版|新訂版|改訂版|増補版|新装版|完全版|愛蔵版|豪華版|決定版|普及版|第\d+版)$"
 )
+# 分冊版、単話、合本の番号は紙版の巻数と対応しない(標本測定の落とし穴 9)。こうした本は紙版に照合しない
+_SPLIT_EDITION = re.compile(r"(分冊|単話|合本|第\s*\d+\s*話)")
 _TRAILING_PAREN = re.compile(r"\s*\(([^()]*)\)\s*$")
 _ROMAN = {
     "I": "1", "II": "2", "III": "3", "IV": "4", "V": "5", "VI": "6", "VII": "7", "VIII": "8", "IX": "9", "X": "10"
 }
+_KANJI_DIGITS = {"〇": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+_KANJI_NUMBER = "[〇一二三四五六七八九十]+"
 _ENCLOSED = r"[―—‐~～〜-][^―—‐~～〜-]+[―—‐~～〜-]"
-_VOLUME_WORD = "|".join(VOLUME_WORDS)
-# 書名の末尾から巻数を探す順。見つかった最初の 1 つを使う
-_KINDLE_VOLUME_PATTERNS = (
-    re.compile(r"\((\d+)\)$"),
-    re.compile(r"\[(\d+)\]$"),
-    re.compile(rf"\(({_VOLUME_WORD})\)$"),
-    re.compile(r"(\d+)\s*巻$"),
-    re.compile(rf"\s({_VOLUME_WORD})$"),
-    re.compile(r"\s(\d+)$"),
-    # 「星界の紋章 2―ささやかな戦い―」のように、巻数のあとに巻の副題が続く書名
-    re.compile(rf"\s(\d+)\s*(?={_ENCLOSED}$)"),
-    re.compile(r"\s(I|II|III|IV|V|VI|VII|VIII|IX|X)$"),
-    # 「…PART2」のように文字の直後に付いた数字。小数(2.5)の一部は巻数にしない
-    re.compile(r"(?<=[^\d\s.])(\d+)$"),
-    # 「ファスト＆スロー（上） あなたの意思は…」のように、巻数のあとに副題が続く書名。末尾の形より後に試す
-    re.compile(rf"\((\d+|{_VOLUME_WORD})\)(?=\s)"),
+_VOLUME_WORD = "|".join(sorted([*VOLUME_WORDS, *_VOLUME_WORD_ALIASES], key=len, reverse=True))
+# 括弧の中や候補の巻に書かれる、1 つの巻を表す形(3、三、第2巻、Vol.2、その2、no.26、第1集)
+_VOLUME_TOKEN = re.compile(
+    rf"^(?:(?:第|no\.?|vol\.?|v\.|volume|part|その)\s*)?(\d+|{_KANJI_NUMBER})\s*(?:巻|集|号)?$", re.IGNORECASE
 )
-_CANDIDATE_VOLUME_RANGE = re.compile(r"\d+\s*[-‐~〜]\s*\d+")
-_CANDIDATE_VOLUME_HEAD = re.compile(
-    r"^\s*(?:no\.?|vol\.?|volume|part|第)?\s*\d+\s*(?:巻|集|号|章|部)?", re.IGNORECASE
+# 書名の末尾から巻数を探す順。見つかった最初の 1 つを使う。2 つ目の値は巻数の書き方の種類で、
+# "bare"(括弧のない末尾の数字やローマ数字)だけは、書名の一部と読む解釈も残す(「ジ・アート・オブ Fallout 4」)
+_KINDLE_VOLUME_PATTERNS = (
+    (re.compile(r"\(([^()]*)\)$"), "paren"),
+    (re.compile(r"\[([^\[\]]*)\]$"), "paren"),
+    (re.compile(rf"((?:第\s*)?(?:\d+|{_KANJI_NUMBER})\s*巻)$"), "word"),
+    (re.compile(rf"\s({_VOLUME_WORD})$"), "word"),
+    (re.compile(r"\s(\d+)$"), "bare"),
+    # 「星界の紋章 2―ささやかな戦い―」「星界の戦旗Ⅲ ―家族の食卓―」のように、巻数のあとに巻の副題が続く書名
+    (re.compile(rf"(?<=[^\d.])(\d+)\s*(?={_ENCLOSED}$)"), "subtitle"),
+    (re.compile(r"\s(I|II|III|IV|V|VI|VII|VIII|IX|X)$"), "bare"),
+    (re.compile(rf"\s({_KANJI_NUMBER})$"), "bare"),
+    # 「…PART2」のように文字の直後に付いた数字。小数(2.5)の一部は巻数にしない
+    (re.compile(r"(?<=[^\d\s.])(\d+)$"), "bare"),
+    # 「ファスト＆スロー（上） あなたの意思は…」のように、巻数のあとに副題が続く書名。末尾の形より後に試す
+    (re.compile(r"\(([^()]*)\)(?=\s)"), "paren"),
 )
 _NON_WORD = re.compile(r"[\W_]+")
 _READING = re.compile(r"《[^《》]*》|\([^()]*\)")
@@ -77,6 +88,12 @@ class KindleTitle:
     labels: tuple[str, ...]
     editions: tuple[str, ...]
     search_text: str
+    # 末尾の数字を巻数と読まず、書名の一部と読んだときの key。括弧のない末尾の数字だけに作る
+    whole_key: str | None = None
+    # 巻数のあとの巻の副題を除いた key(「災悪のアヴァロン 3 ～…～」の「災悪のアヴァロン」)
+    key_without_volume_subtitle: str | None = None
+    # 分冊版、単話、合本。紙版の巻と対応しないので照合しない
+    split_edition: bool = False
 
 
 @dataclass(frozen=True)
@@ -106,7 +123,7 @@ class Match:
 
 
 def nfkc(text: str) -> str:
-    return unicodedata.normalize("NFKC", text)
+    return unicodedata.normalize("NFKC", text.translate(_ROMAN_NUMERAL_CHARS))
 
 
 def normalize_key(text: str) -> str:
@@ -119,14 +136,49 @@ def normalize_key(text: str) -> str:
     return _NON_WORD.sub("", text).casefold()
 
 
-def parse_kindle_title(title: str, series_title: str | None = None) -> KindleTitle:
+def _plain_key(text: str) -> str:
+    """記号と空白だけを除いた比較用の文字列。normalize_key と違い、括弧の中身(巻数など)を残す。"""
+    return _NON_WORD.sub("", nfkc(text)).casefold()
+
+
+def _kanji_number(text: str) -> int | None:
+    if not text or any(c not in _KANJI_DIGITS and c != "十" for c in text):
+        return None
+    if "十" in text:
+        tens, _, ones = text.partition("十")
+        if len(tens) > 1 or len(ones) > 1 or "十" in ones:
+            return None
+        return (_KANJI_DIGITS[tens] if tens else 1) * 10 + (_KANJI_DIGITS[ones] if ones else 0)
+    return int("".join(str(_KANJI_DIGITS[c]) for c in text))
+
+
+def parse_volume_token(text: str) -> str | None:
+    """1 つの巻を表す語(3、三、Ⅲ、第2巻、Vol.2、上巻、下)を、比べる形("3"、"上")にする。巻でなければ None。"""
+    token = nfkc(text).strip()
+    word = _VOLUME_WORD_ALIASES.get(token.replace(" ", ""), token.replace(" ", ""))
+    if word in VOLUME_WORDS:
+        return word
+    if token.upper() in _ROMAN:
+        return _ROMAN[token.upper()]
+    m = _VOLUME_TOKEN.match(token)
+    if not m:
+        return None
+    number = int(m.group(1)) if m.group(1).isdigit() else _kanji_number(m.group(1))
+    return str(number) if number is not None else None
+
+
+def parse_kindle_title(
+    title: str, series_title: str | None = None, trailing_names: tuple[str, ...] = ()
+) -> KindleTitle:
+    """trailing_names は、書名の末尾に付いていれば外す叢書名(候補の seriesTitle から渡す)。"""
     text = nfkc(title).strip()
+    split_edition = bool(_SPLIT_EDITION.search(text))
 
     labels: list[str] = []
-    # 末尾の (…) はレーベル名として外す。中身が数字や巻の語なら巻数なので残す
+    # 末尾の (…) はレーベル名として外す。中身が巻数(三、第2巻、下巻など)なら巻数なので残す
     while True:
         m = _TRAILING_PAREN.search(text)
-        if not m or m.group(1).strip().isdigit() or m.group(1).strip() in VOLUME_WORDS:
+        if not m or parse_volume_token(m.group(1)) is not None:
             break
         if m.group(1).strip():
             labels.append(m.group(1).strip())
@@ -153,24 +205,34 @@ def parse_kindle_title(title: str, series_title: str | None = None) -> KindleTit
             tokens.append(token)
     text = " ".join(tokens)
 
-    # Kindle の書名の末尾に付いたシリーズ名(「星界の断章 Ⅰ 星界シリーズ」)を外す
-    if series_title:
-        series_key = normalize_key(series_title)
+    # Kindle の書名の末尾に付いたシリーズ名(「星界の断章 Ⅰ 星界シリーズ」)や叢書名を外す。
+    # 括弧の中身を残して比べ、「…とある科学の超電磁砲(7)」を巻数ごと外さないようにする
+    for name in (series_title, *trailing_names):
+        name_key = _plain_key(name) if name else ""
         words = text.split()
-        for i in range(1, len(words)):
-            if series_key and normalize_key(" ".join(words[i:])) == series_key:
-                text = " ".join(words[:i])
-                break
-
-    volume = None
-    for pattern in _KINDLE_VOLUME_PATTERNS:
-        m = pattern.search(text)
-        if m:
-            volume = _ROMAN.get(m.group(1), m.group(1))
-            if volume.isdigit():
-                volume = str(int(volume))
-            text = (text[: m.start()] + " " + text[m.end() :]).strip()
+        stripped = next(
+            (" ".join(words[:i]) for i in range(1, len(words)) if _plain_key(" ".join(words[i:])) == name_key),
+            None,
+        )
+        if name_key and stripped:
+            text = stripped
             break
+
+    volume = whole_key = key_without_volume_subtitle = None
+    for pattern, kind in _KINDLE_VOLUME_PATTERNS:
+        m = pattern.search(text)
+        if not m:
+            continue
+        token = parse_volume_token(m.group(1))
+        if token is None:
+            continue
+        volume = token
+        if kind == "bare":
+            whole_key = normalize_key(text)
+        text = (text[: m.start()] + " " + text[m.end() :]).strip()
+        if kind == "subtitle":
+            key_without_volume_subtitle = normalize_key(re.sub(rf"\s*{_ENCLOSED}$", "", text))
+        break
 
     return KindleTitle(
         key=normalize_key(text),
@@ -178,6 +240,9 @@ def parse_kindle_title(title: str, series_title: str | None = None) -> KindleTit
         labels=tuple(labels),
         editions=tuple(editions),
         search_text=_search_text(text),
+        whole_key=whole_key,
+        key_without_volume_subtitle=key_without_volume_subtitle,
+        split_edition=split_edition,
     )
 
 
@@ -197,6 +262,8 @@ def search_creator(authors_text: str) -> str:
 def search_stages(book: Book) -> list[Stage]:
     """書名と著者 → 書名だけ → シリーズ名と著者、の順の検索。条件が空の段は作らない。"""
     kindle = parse_kindle_title(book.title, book.series_title)
+    if kindle.split_edition:
+        return []
     creator = search_creator(book.authors_text)
     volume_term = {"title": f"{kindle.search_text} {kindle.volume}"} if kindle.volume else None
 
@@ -251,28 +318,37 @@ class _CandidateVolume:
 
 
 def _candidate_volume(volume: str | None) -> _CandidateVolume:
+    """候補の巻。巻の数字として比べるのは、値全体が 1 つの巻を表すとき(3、no.26、Vol. 1、第1集、上巻)だけ。
+
+    11.5、別巻2、第2部 1、1-3、1・2、rerecord 1 のような値は、どの巻数とも一致させない。
+    後ろの括弧は巻の副題(「2 (ささやかな戦い)」)として書名との比較に使う。
+    """
     if not volume or not volume.strip():
         return _CandidateVolume(None, "", False)
     text = nfkc(volume).strip()
-    bare = re.sub(r"[()\s]", "", text)
-    if bare in VOLUME_WORDS:
-        return _CandidateVolume(bare, "", True)
-    if _CANDIDATE_VOLUME_RANGE.search(text):
-        # 「1-3」のような合本は、単独の巻とは対応させない
-        return _CandidateVolume("range", "", True)
-    number = re.search(r"\d+", text)
-    rest = _CANDIDATE_VOLUME_HEAD.sub("", text) if number else text
-    rest = normalize_key(rest.replace("(", " ").replace(")", " "))
-    return _CandidateVolume(str(int(number.group(0))) if number else None, rest, True)
+    m = re.match(r"^(.*?)\s*\((.*)\)$", text)
+    head, subtitle = (m.group(1), m.group(2)) if m and m.group(1) else (text, "")
+    key = parse_volume_token(head)
+    if key is not None:
+        return _CandidateVolume(key, normalize_key(subtitle.replace("(", " ").replace(")", " ")), True)
+    return _CandidateVolume(None, normalize_key(text.replace("(", " ").replace(")", " ")), True)
+
+
+def _title_parts(record: NdlRecord) -> list[str]:
+    title = nfkc(record.title)
+    # 並列タイトル(「X = Y : Z」の Y)は書名の比較に使わない。後ろの「 : 」は残す
+    title = re.sub(r" = [^:]*?(?= : |$)", "", title)
+    return title.split(" : ")
 
 
 def _title_variants(record: NdlRecord, volume: _CandidateVolume) -> tuple[set[str], set[str]]:
-    """候補の書名の比較用の形。(本タイトルか本タイトル+副題, それに巻の副題を足したもの)。"""
-    title = nfkc(record.title)
-    # 並列タイトル(「X = Y」)は書名の比較に使わない
-    title = re.sub(r" = [^:]*", "", title)
-    main = re.split(r" : ", title)[0]
-    plain = {k for k in (normalize_key(main), normalize_key(title)) if k}
+    """候補の書名の比較用の形。(本タイトルか、本タイトルに副題を前から順に足したもの, それに巻の副題を足したもの)。
+
+    NDL の書名は「本タイトル : 副題 : 副題」と副題を 2 つ以上持つことがあり、Kindle は最初の副題までを書名に
+    入れることが多い(「線一本からはじめる伝わる絵の描き方 : ロジカルデッサンの技法 : まったく新しい…」)。
+    """
+    parts = _title_parts(record)
+    plain = {k for k in (normalize_key(" : ".join(parts[: i + 1])) for i in range(len(parts))) if k}
     with_volume = {k + volume.text for k in plain} if volume.text else set()
     return plain, with_volume
 
@@ -298,6 +374,15 @@ def _strip_series_number(title: str, name: str, number: str) -> str | None:
     return (nfkc(title)[: m.start()] + " " + nfkc(title)[m.end() :]).strip()
 
 
+def _series_names(record: NdlRecord) -> tuple[str, ...]:
+    names = []
+    for series in record.series:
+        name = re.split(r"\s*[;.]\s", nfkc(series))[0].strip()
+        if name:
+            names.append(name)
+    return tuple(names)
+
+
 def _kindle_forms(book: Book, record: NdlRecord) -> list[KindleTitle]:
     forms = [parse_kindle_title(book.title, book.series_title)]
     for name, number in _series_numbers(record):
@@ -305,6 +390,11 @@ def _kindle_forms(book: Book, record: NdlRecord) -> list[KindleTitle]:
         if stripped:
             # 叢書番号を巻数と取り違えないよう、叢書名と番号を除いた書名で巻数を取り直す
             forms.append(parse_kindle_title(stripped, book.series_title))
+    names = _series_names(record)
+    if names:
+        # 書名の末尾に括弧なしで付いた叢書名(「SQL 第2版 … プログラミング学習シリーズ」)は、候補がその叢書に
+        # 入っているときだけ外す
+        forms.append(parse_kindle_title(book.title, book.series_title, trailing_names=names))
     return forms
 
 
@@ -315,13 +405,15 @@ def is_adoptable(book: Book, record: NdlRecord) -> bool:
     volume = _candidate_volume(record.volume)
     plain, with_volume = _title_variants(record, volume)
     for kindle in _kindle_forms(book, record):
-        if not kindle.key:
+        if not kindle.key or kindle.split_edition:
             continue
         if kindle.key in plain:
             if kindle.volume is not None:
                 if volume.key == kindle.volume:
                     return True
-            elif not volume.has_value or volume.key == "1":
+            elif not volume.has_value or (volume.key == "1" and not _has_numeral_label(kindle)):
+                # 巻数のない本は、巻のない候補か 1 巻を採る。ただしレーベルとして外した括弧に数字があれば、
+                # 読めなかった巻数かもしれないので 1 巻は採らない
                 return True
         if kindle.key in with_volume:
             # 巻の副題まで書名に含めて一致した(「星界の紋章 2―ささやかな戦い―」)
@@ -330,14 +422,59 @@ def is_adoptable(book: Book, record: NdlRecord) -> bool:
     return False
 
 
+def _has_numeral_label(kindle: KindleTitle) -> bool:
+    return any(re.search(r"\d", label) for label in kindle.labels)
+
+
+def _is_adoptable_on_second_reading(book: Book, record: NdlRecord) -> bool:
+    """書名の読み方を変えて比べる。どの候補も is_adoptable を満たさないときだけ使う。
+
+    - 末尾の数字を巻数と読まず、書名の一部と読む(「ジ・アート・オブ Fallout 4」)。
+    - 巻数のあとの巻の副題を、NDL が持たないものとして外す(「災悪のアヴァロン 3 ～…～」)。副題を持つ候補
+      (同名のコミカライズなど)とは比べない。
+    後回しにするのは、巻の副題まで一致する紙版や、「X 2」の 2 巻がある本で、別の本(副題のない同名の
+    コミカライズ、書名が「X2」の本)を採らないため。
+    """
+    if not is_candidate(record):
+        return False
+    volume = _candidate_volume(record.volume)
+    plain, _ = _title_variants(record, volume)
+    parts = _title_parts(record)
+    for kindle in _kindle_forms(book, record):
+        if kindle.split_edition:
+            continue
+        if kindle.whole_key and kindle.whole_key in plain and (not volume.has_value or volume.key == "1"):
+            return True
+        if (
+            kindle.key_without_volume_subtitle
+            and volume.key == kindle.volume
+            and not volume.text
+            and len(parts) == 1
+            and normalize_key(parts[0]) == kindle.key_without_volume_subtitle
+        ):
+            return True
+    return False
+
+
+def adoptable_records(book: Book, records: Iterable[NdlRecord]) -> list[NdlRecord]:
+    """採用条件を満たす候補。1 件もなければ、書名の読み方を変えて探し直す(_is_adoptable_on_second_reading)。"""
+    records = list(records)
+    adopted = [r for r in records if is_adoptable(book, r)]
+    if adopted:
+        return adopted
+    return [r for r in records if _is_adoptable_on_second_reading(book, r)]
+
+
 def _label_matches(label: str, record: NdlRecord) -> bool:
+    """候補の叢書名が Kindle のレーベルに含まれるか(「ハヤカワ文庫JA」に「ハヤカワ文庫」)。
+
+    逆向き(レーベルが叢書名に含まれる)は数えない。レーベルが出版社名(講談社)だと、同じ出版社の文庫
+    (講談社文芸文庫)に絞ってしまうため。2 文字以下の叢書名(FC など)は偶然の一致が多いので使わない。
+    """
     label_key = normalize_key(label)
-    for series in record.series:
-        name = re.split(r"\s*[;.]\s", nfkc(series))[0]
+    for name in _series_names(record):
         name_key = normalize_key(name)
-        shorter, longer = sorted((label_key, name_key), key=len)
-        # 2 文字以下の叢書名(FC など)は偶然の部分一致が多いので使わない
-        if len(shorter) >= 3 and shorter in longer:
+        if len(name_key) >= 3 and name_key in label_key:
             return True
     return False
 
@@ -383,7 +520,7 @@ def normalize_issued(raw: str | None) -> str | None:
     """dcterms:issued(2015.4、[2020] など)を記載の精度のまま YYYY、YYYY-MM、YYYY-MM-DD にする。"""
     if not raw:
         return None
-    m = re.fullmatch(r"\[?(\d{4})\]?(?:\.(\d{1,2})(?:\.(\d{1,2}))?)?\.?", nfkc(raw).strip())
+    m = re.fullmatch(r"\[?(\d{4})(?:\.(\d{1,2})(?:\.(\d{1,2}))?)?\.?\]?\.?", nfkc(raw).strip())
     if not m:
         return None
     year, month, day = m.groups()
@@ -399,11 +536,19 @@ def normalize_issued(raw: str | None) -> str | None:
 
 
 def parse_pages(extent: str | None) -> int | None:
-    """dc:extent(389p、xii, 245 pages など)の最後のページ数。ページ付がなければ None。"""
+    """dc:extent のページ数。「209, 13p」のように単位が最後にだけ付く並びでは、最大の数(本文)を採る。
+
+    大きさ(; 19cm)と図版以降は見ない。ページ付がなければ None。
+    """
     if not extent:
         return None
-    numbers = re.findall(r"(\d+)\s*(?:p\b|p$|pages?\b|ページ)", nfkc(extent))
-    return int(numbers[-1]) if numbers else None
+    text = nfkc(extent)
+    if "ページ付なし" in text:
+        return None
+    text = re.split(r"図版|;|\+", text)[0]
+    if not re.search(r"\d\s*(?:p\b|p$|pages?\b|ページ)", text):
+        return None
+    return max(int(n) for n in re.findall(r"\d+", text))
 
 
 def clean_notes(descriptions: Iterable[str]) -> tuple[str, ...]:
@@ -475,24 +620,31 @@ def _edition_attributes(record: NdlRecord) -> dict[str, object]:
     }
 
 
-def _build_match(method: str, records: list[NdlRecord]) -> Match:
+def _build_match(method: str, records: list[NdlRecord], *, edition_known: bool = True) -> Match:
     attributes = _work_attributes(records)
-    if len(records) == 1:
+    if len(records) == 1 and edition_known:
         attributes.update(_edition_attributes(records[0]))
     return Match(method=method, candidate_ids=tuple(r.id for r in records), **attributes)
 
 
 def decide_match(book: Book, records: Iterable[NdlRecord]) -> Match | None:
     """書名検索の候補から照合する。採用条件を満たす候補がなければ None。"""
-    adopted = _dedupe_by_isbn([r for r in records if is_adoptable(book, r)])
+    adopted = _dedupe_by_isbn(adoptable_records(book, records))
     if not adopted:
         return None
     kindle = parse_kindle_title(book.title, book.series_title)
     for label in kindle.labels:
         adopted = _narrow(adopted, lambda r, label=label: _label_matches(label, r))
+    # 版表記(新版、第2版、完全版)が候補のどれにも合わなければ、残った候補は別の版なので版の属性を付けない
+    edition_known = True
     for edition in kindle.editions:
-        adopted = _narrow(adopted, lambda r, edition=edition: _edition_matches(edition, r))
-    return _build_match("edition" if len(adopted) == 1 else "work", adopted)
+        kept = [r for r in adopted if _edition_matches(edition, r)]
+        if kept:
+            adopted = kept
+        else:
+            edition_known = False
+    single = len(adopted) == 1 and edition_known
+    return _build_match("edition" if single else "work", adopted, edition_known=edition_known)
 
 
 def decide_isbn_match(records: Iterable[NdlRecord]) -> Match | None:

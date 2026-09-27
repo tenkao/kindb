@@ -22,12 +22,13 @@ from kindb.db import DatabaseLockedError, connect, create_schema
 from kindb.matching import (
     Book,
     Match,
+    adoptable_records,
     decide_isbn_match,
     decide_match,
-    is_adoptable,
     is_candidate,
     isbn_checksum_ok,
     normalize_isbn,
+    parse_kindle_title,
     search_stages,
 )
 from kindb.ndl import MAX_RESULTS, NdlClient, NdlError, NdlRecord, SearchResponse, parse_item
@@ -191,6 +192,10 @@ def _fetch_by_isbn(client: NdlClient, book: Book, isbn: str) -> FetchResult:
 
 
 def _fetch_by_title(client: NdlClient, book: Book) -> FetchResult:
+    if parse_kindle_title(book.title, book.series_title).split_edition:
+        # 分冊版、単話、合本の番号は紙版の巻と対応しないので、照合できない本のために NDL へ問い合わせない
+        skipped = [{"stage": "skipped", "reason": "split_edition"}]
+        return FetchResult(book.asin, STATUS_NOT_FOUND, "title", skipped, [], None)
     cache: dict[tuple[tuple[str, str], ...], SearchResponse] = {}
     log: list[dict[str, object]] = []
     unresolved = False
@@ -216,7 +221,7 @@ def _fetch_by_title(client: NdlClient, book: Book) -> FetchResult:
             continue
         candidates = _candidates(resolved)
         # 同じ作品の別の巻しか残らない段では止めず、次の段へ進む
-        if any(is_adoptable(book, record) for record in candidates):
+        if adoptable_records(book, candidates):
             return FetchResult(
                 book.asin, STATUS_FOUND, "title", log, candidates, decide_match(book, candidates)
             )

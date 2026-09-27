@@ -327,7 +327,8 @@ def test_search_text_replaces_symbols_with_word_breaks() -> None:
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [("2015.4", "2015-04"), ("2015.12", "2015-12"), ("[2020]", "2020"), ("2015", "2015"), ("2015.", "2015"),
-     ("2020.3.10", "2020-03-10"), ("昭和52", None), ("[2006]-", None), ("2015.13", None), (None, None)],
+     ("2020.3.10", "2020-03-10"), ("[2020.3]", "2020-03"), ("昭和52", None), ("[2006]-", None), ("2015.13", None),
+     (None, None)],
 )
 def test_normalize_issued_keeps_the_recorded_precision(raw: str | None, expected: str | None) -> None:
     assert normalize_issued(raw) == expected
@@ -335,7 +336,8 @@ def test_normalize_issued_keeps_the_recorded_precision(raw: str | None, expected
 
 @pytest.mark.parametrize(
     ("extent", "expected"),
-    [("389p", 389), ("12, 389p", 389), ("xviii, 245 pages", 245), ("1冊(ページ付なし)", None), ("volumes", None)],
+    [("389p", 389), ("12, 389p", 389), ("209, 13p", 209), ("xii, 345, 21p", 345), ("345p 図版16p", 345),
+     ("389p ; 19cm", 389), ("xviii, 245 pages", 245), ("1冊(ページ付なし)", None), ("volumes", None), ("2冊", None)],
 )
 def test_parse_pages(extent: str, expected: int | None) -> None:
     assert parse_pages(extent) == expected
@@ -361,3 +363,196 @@ def test_clean_notes_drops_year_and_publication_markers() -> None:
         "原タイトル: SCRUM",
         "索引あり",
     )
+
+
+# --- 実データ 50 冊で取りこぼした書名の形 ---------------------------------------------------------------
+
+
+def test_unicode_roman_numeral_before_volume_subtitle_is_the_volume() -> None:
+    # NFKC は Ⅲ を III に変えるので、そのままでは巻数が書名に残り、検索も 0 件になっていた
+    book = _book("星界の戦旗Ⅲ　―家族の食卓―")
+    parsed = parse_kindle_title(book.title)
+    assert (parsed.volume, parsed.key, parsed.search_text) == ("3", "星界の戦旗家族の食卓", "星界の戦旗 家族の食卓")
+    assert is_adoptable(book, record(title="星界の戦旗", volume="3 (家族の食卓)"))
+    assert not is_adoptable(book, record(title="星界の戦旗", volume="4 (軋む時空)"))
+
+
+def test_volume_words_with_maki_match_either_notation() -> None:
+    assert is_adoptable(_book("銃・病原菌・鉄　上巻"), record(title="銃・病原菌・鉄", volume="上"))
+    assert is_adoptable(_book("銃・病原菌・鉄（上）"), record(title="銃・病原菌・鉄", volume="上巻"))
+    assert not is_adoptable(_book("銃・病原菌・鉄　上巻"), record(title="銃・病原菌・鉄", volume="下巻"))
+
+
+def test_kindle_title_matches_ndl_title_up_to_its_first_subtitle() -> None:
+    # NDL の書名が副題を 2 つ持ち、Kindle は最初の副題までを書名に入れている
+    book = _book("線一本からはじめる伝わる絵の描き方　ロジカルデッサンの技法")
+    candidate = record(
+        title="線一本からはじめる伝わる絵の描き方 : ロジカルデッサンの技法 : まったく新しいデッサンの教科書"
+    )
+    assert is_adoptable(book, candidate)
+    # 副題の途中で切れた形とは一致させない
+    assert not is_adoptable(_book("線一本からはじめる伝わる絵の描き方　ロジカルデッサン"), candidate)
+
+
+def test_trailing_series_name_is_removed_only_for_candidates_in_that_series() -> None:
+    book = _book("SQL 第2版 ゼロからはじめるデータベース操作 プログラミング学習シリーズ")
+    in_series = record("R100000002-I027342611", "SQL : ゼロからはじめるデータベース操作",
+                       series=("プログラミング学習シリーズ",), edition="第2版", isbn="978-4-7981-4445-0")
+    first_edition = record("R100000002-I000010912604", "SQL : ゼロからはじめるデータベース操作",
+                           series=("プログラミング学習シリーズ",), isbn="978-4-7981-2291-5")
+    not_in_series = record("R100000002-I000000009", "SQL : ゼロからはじめるデータベース操作")
+    assert is_adoptable(book, in_series)
+    assert not is_adoptable(book, not_in_series)
+    match = decide_match(book, [in_series, first_edition, not_in_series])
+    assert match is not None and match.candidate_ids == ("R100000002-I027342611",)
+
+
+def test_trailing_number_is_read_as_part_of_the_title_only_when_no_volume_matches() -> None:
+    fallout = record("R100000002-I029478804", "ジ・アート・オブFallout 4")
+    match = decide_match(_book("ジ・アート・オブ Fallout 4 (G-NOVELS)"), [fallout])
+    assert match is not None and match.candidate_ids == ("R100000002-I029478804",)
+    # 巻数と読んで一致する候補があれば、書名が「X2」の別の本は採らない
+    volume_2 = record("R100000002-I000000002", "ドラゴンの本", volume="2")
+    titled_2 = record("R100000002-I000000102", "ドラゴンの本2")
+    match = decide_match(_book("ドラゴンの本 2"), [volume_2, titled_2])
+    assert match is not None and match.candidate_ids == ("R100000002-I000000002",)
+
+
+def test_volume_subtitle_absent_from_ndl_matches_only_when_nothing_else_does() -> None:
+    book = _book("【電子版限定特典付き】災悪のアヴァロン 3 ～悪役デブだった俺、クラス対抗戦で影に徹していたら、"
+                 "なぜか伝説のラスボスとガチバトルになった件～ (ＨＪノベルス)")
+    novel = record("R100000002-I032796961", "災悪のアヴァロン", volume="3", series=("HJ NOVELS ; HJN68-03",))
+    # 副題を持つ同名のコミカライズは採らない
+    comic = record("R100000002-I033374591", "災悪のアヴァロン : ゲーム最弱の悪役デブに転移したけど", volume="3",
+                   series=("ヤングジャンプコミックス",))
+    assert not is_adoptable(book, novel)
+    match = decide_match(book, [novel, comic])
+    assert match is not None and match.candidate_ids == ("R100000002-I032796961",)
+    # 巻の副題まで一致する紙版があれば、副題のない同名の本は採らない(「星界の紋章」のコミカライズ)
+    seikai = _book("星界の紋章　２―ささやかな戦い―")
+    novel_2 = record("R100000002-I000002498252", "星界の紋章", volume="2 (ささやかな戦い)")
+    comic_2 = record("R100000002-I025412419", "星界の紋章", volume="2", series=("METEOR COMICS",))
+    match = decide_match(seikai, [novel_2, comic_2])
+    assert match is not None and match.candidate_ids == ("R100000002-I000002498252",)
+
+
+# --- レビューで見つかった誤照合の形 ---------------------------------------------------------------------
+
+
+def _volumes(title: str, count: int = 3, **kwargs: object) -> list:
+    return [record(f"R100000002-I00000010{n}", title, volume=str(n), **kwargs) for n in range(1, count + 1)]
+
+
+@pytest.mark.parametrize(
+    "kindle_title",
+    ["竜馬がゆく（三） (文春文庫)", "竜馬がゆく (Ⅲ)", "竜馬がゆく (3巻)", "竜馬がゆく (第3巻)", "竜馬がゆく (Vol.3)",
+     "竜馬がゆく (その3)", "竜馬がゆく 第3巻", "竜馬がゆく 三"],
+)
+def test_volume_notations_in_and_out_of_parentheses_pick_that_volume(kindle_title: str) -> None:
+    # 括弧の中の巻数をレーベルとして外すと、巻数のない本として 1 巻を採ってしまう
+    match = decide_match(_book(kindle_title), _volumes("竜馬がゆく"))
+    assert match is not None and match.candidate_ids == ("R100000002-I000000103",)
+
+
+def test_volume_word_in_parentheses_with_maki() -> None:
+    candidates = [
+        record("R100000002-I1", "銃・病原菌・鉄", volume="上巻"),
+        record("R100000002-I2", "銃・病原菌・鉄", volume="下巻"),
+    ]
+    match = decide_match(_book("銃・病原菌・鉄 (下巻)"), candidates)
+    assert match is not None and match.candidate_ids == ("R100000002-I2",)
+
+
+def test_unparsed_numeral_in_a_label_blocks_volume_1() -> None:
+    # 読めなかった巻数かもしれない数字が括弧にあれば、巻数のない本として 1 巻を採らない
+    candidates = _volumes("竜馬がゆく")
+    assert decide_match(_book("竜馬がゆく (2021年新装)"), candidates) is None
+    assert decide_match(_book("竜馬がゆく (文春文庫)"), candidates).candidate_ids == ("R100000002-I000000101",)
+
+
+@pytest.mark.parametrize(
+    "kindle_title",
+    [
+        "理想のヒモ生活【分冊版】　12",
+        "理想のヒモ生活【単話版】(12)",
+        "理想のヒモ生活 【第12話】",
+        "【極！合本シリーズ】 理想のヒモ生活12巻",
+        "理想のヒモ生活 全3冊合本版",
+    ],
+)
+def test_split_episode_and_omnibus_editions_are_not_matched_to_paper_volumes(kindle_title: str) -> None:
+    book = _book(kindle_title)
+    assert parse_kindle_title(kindle_title).split_edition
+    assert search_stages(book) == []
+    assert decide_match(book, _volumes("理想のヒモ生活", count=12)) is None
+
+
+def test_edition_statement_without_a_matching_candidate_keeps_only_work_attributes() -> None:
+    # 新版の紙版がまだ NDL になく、旧版だけが残る。旧版の ISBN や刊行年月を新版の本に付けない
+    book = _book("新版　マーケティングの基本　この１冊ですべてわかる")
+    old = record("R100000002-I000010061268", "マーケティングの基本 : この1冊ですべてわかる", isbn="978-4-534-04548-9",
+                 issued="2009.3", ndc=("9", "675"))
+    match = decide_match(book, [old])
+    assert match is not None
+    assert (match.method, match.isbn, match.paper_issued, match.ndc) == ("work", None, None, "675")
+
+
+def test_trailing_series_name_with_a_volume_is_not_stripped() -> None:
+    parsed = parse_kindle_title("とある魔術の禁書目録外伝　とある科学の超電磁砲(7) (電撃コミックス)",
+                                series_title="とある科学の超電磁砲")
+    assert parsed.volume == "7"
+    book = _book("銀河英雄伝説 黎明篇 (3)", series_title="黎明篇")
+    unnumbered = record("R100000002-I1", "銀河英雄伝説")
+    volume_3 = record("R100000002-I3", "銀河英雄伝説 : 黎明篇", volume="3")
+    match = decide_match(book, [unnumbered, volume_3])
+    assert match is not None and match.candidate_ids == ("R100000002-I3",)
+
+
+@pytest.mark.parametrize("ndl_volume", ["11.5", "別巻11", "第2部 11", "11・12", "4&11", "rerecord 11", "1-11"])
+def test_candidate_volume_that_is_not_a_single_volume_does_not_match(ndl_volume: str) -> None:
+    assert not is_adoptable(_book("エマ 11"), record(title="エマ", volume=ndl_volume))
+
+
+def test_regular_volume_is_an_edition_match_even_with_a_half_volume_next_to_it() -> None:
+    book = _book("ハズレ枠の【状態異常スキル】で最強になった俺がすべてを蹂躙するまで 11 (オーバーラップ文庫)")
+    title = "ハズレ枠の〈状態異常スキル〉で最強になった俺がすべてを蹂躙するまで"
+    regular = record("R100000002-I032867000", title, volume="11", series=("オーバーラップ文庫 ; し-03-20",))
+    half = record("R100000002-I033258107", title, volume="11.5", series=("オーバーラップ文庫 ; し-03-21",))
+    match = decide_match(book, [regular, half])
+    assert match is not None and (match.method, match.candidate_ids) == ("edition", ("R100000002-I032867000",))
+
+
+def test_publisher_label_does_not_narrow_to_that_publishers_paperback() -> None:
+    book = _book("つげ義春日記 (講談社)")
+    hardcover = record("R100000002-I1", "つげ義春日記", isbn="4-06-201085-6")
+    bunko = record("R100000002-I2", "つげ義春日記", series=("講談社文芸文庫 ; つK1",), isbn="978-4-06-519067-8")
+    assert decide_match(book, [hardcover, bunko]).method == "work"
+
+
+def test_short_series_names_do_not_narrow() -> None:
+    book = _book("ビューティフル・エブリデイ（３） (FEEL COMICS)")
+    fc = record("R100000002-I1", "ビューティフル・エブリデイ", volume="3", series=("FC",), isbn="978-4-396-76834-8")
+    other = record("R100000002-I2", "ビューティフル・エブリデイ", volume="3", isbn="978-4-396-76835-5")
+    assert decide_match(book, [fc, other]).method == "work"
+
+
+def test_volume_subtitle_match_still_requires_the_same_volume() -> None:
+    candidate = record(title="星界の紋章", volume="2 (ささやかな戦い)")
+    assert not is_adoptable(_book("星界の紋章　３―ささやかな戦い―"), candidate)
+
+
+def test_parallel_title_keeps_the_main_title_variant() -> None:
+    candidate = record(
+        title="ファスト&スロー = Thinking, fast and slow : あなたの意思はどのように決まるか?", volume="上"
+    )
+    assert is_adoptable(_book("ファスト＆スロー（上）"), candidate)
+
+
+def test_trailing_roman_x_can_be_part_of_the_title() -> None:
+    match = decide_match(_book("マルコム X"), [record("R100000002-I1", "マルコムX : 自伝")])
+    assert match is not None and match.candidate_ids == ("R100000002-I1",)
+
+
+def test_series_stage_adds_the_volume_word_when_over_the_limit() -> None:
+    stages = search_stages(Book("B1", "理想のヒモ生活(25)", "日月 ネコ", "理想のヒモ生活"))
+    assert stages[2].refinements == ({"title": "理想のヒモ生活 25", "creator": "日月 ネコ"},)
