@@ -423,10 +423,14 @@ def enrich(
         None, "--overrides", help="CSV with columns asin,isbn. Replaces all saved overrides; empty isbn = do not match"
     ),
     retry_missing: bool = typer.Option(
-        False, "--retry-missing", help="Also refetch books that were not found or left incomplete."
+        False,
+        "--retry-missing",
+        help="Also refetch books that were not found or left incomplete (unfetched books are included too).",
     ),
     refresh: bool = typer.Option(
-        False, "--refresh", help="Refetch the selected books regardless of their state (except excluded)."
+        False,
+        "--refresh",
+        help="Refetch the selected books regardless of their state (except excluded). Narrow it with --where.",
     ),
     interval: float = typer.Option(
         DEFAULT_INTERVAL, "--interval", min=DEFAULT_INTERVAL, help="Seconds between requests to NDL Search"

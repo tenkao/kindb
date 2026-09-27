@@ -76,6 +76,7 @@ kindb status                        # 取得の状態ごとの冊数(Bib ...)
 
 - `--where` は `v_books` への SQL の条件で、対象の本を絞る。`--limit` は今回の冊数の上限。
 - `--refresh` は、状態によらず対象の本を引き直す(照合の規則が変わったあとなど)。
+- `--retry-missing` と `--refresh` は、未取得の本も対象に含む(既定の実行の対象に足す形)。見つからなかった本だけを引き直すなら `--retry-missing --where "bib_status IN ('not_found', 'incomplete')"` のように `--where` で絞る。絞らないと、未取得の本がすべて対象になり数時間かかる。
 - 照合を誤った本や、見つからなかった大事な本は、`asin,isbn` の見出しを持つ CSV を `kindb enrich --overrides <csv>` で渡して訂正する。ISBN を指定した本は書名でなく ISBN で引き、ISBN を空にした本は照合しない。CSV は前回の訂正を全件置き換える。
 - `kindb rematch` は、保存済みの候補から照合だけをやり直す(通信しない)。
 
