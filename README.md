@@ -68,10 +68,11 @@ kindb recent          # 最近ライブラリに入った本(既定 20 冊、-n 
 kindb enrich --where "NOT list_contains(genres, 'コミック・ラノベ・BL')" --limit 50
 kindb enrich                        # 残りの全冊。何度実行しても、取得済みの本は飛ばして続きから引く
 kindb enrich --retry-missing        # 見つからなかった本と、保留した本も引き直す
+kindb enrich --where "bib_status = 'error'"   # --where は v_books の列で絞る。bib_status は取得の状態
 kindb status                        # 取得の状態ごとの冊数(Bib ...)
 ```
 
-蔵書の 1 冊ずつを書名と著者で NDL サーチに問い合わせ、紙版の書誌に照合して保存する。誤った書誌情報を付けるより何も付けないことを選ぶ規則なので、見つからない本も出る。問い合わせは 3 秒以上の間隔で 1 本ずつ送るため、全冊には数時間かかる(1 冊あたり 1〜6 回問い合わせる)。取得中も DB は開いたままにしないので、`kindb query` や Claude Desktop からの問い合わせと並行できる。Ctrl-C で止めても、次の実行が続きから再開する。
+蔵書の 1 冊ずつを書名と著者で NDL サーチに問い合わせ、紙版の書誌に照合して保存する。誤った書誌情報を付けるより何も付けないことを選ぶ規則なので、見つからない本も出る(分冊版、単話、合本の本は紙版の巻と対応しないので、問い合わせずに「見つからない」とする)。問い合わせは 3 秒以上の間隔で 1 本ずつ送るため、全冊には数時間かかる(1 冊あたり 1〜6 回問い合わせる)。取得中も DB は開いたままにしないので、`kindb query` や Claude Desktop からの問い合わせと並行できる。Ctrl-C で止めても、同じコマンドを実行し直せば続きから再開する(`--refresh` と `--retry-missing` も)。`kindb enrich` と `kindb rematch` は同じ DB で同時に 1 つしか動かない。
 
 - `--where` は `v_books` への SQL の条件で、対象の本を絞る。`--limit` は今回の冊数の上限。
 - `--refresh` は、状態によらず対象の本を引き直す(照合の規則が変わったあとなど)。
@@ -160,7 +161,7 @@ ln -s "$(pwd)/SKILL.md" ~/.claude/skills/kindb/SKILL.md
    Skill を使えない環境では、会話の最初に次の文を貼る。
 
    ```
-   kindb(Kindle 蔵書 DB)を使う。本の一覧は v_books、著者別の冊数は v_author_counts を使う。一覧は count(*) で総数を確かめてから LIMIT/OFFSET でページングし、ORDER BY の最後に asin などの一意な列を置く。read_status = 'UNKNOWN' は「読了マークが付いていない本」と表現する。v_books の subjects(件名の配列)、ndc_label、publisher、paper_issued は NDL サーチの紙版の書誌由来で、bib_match が NULL の本には書誌情報がない。
+   kindb(Kindle 蔵書 DB)を使う。本の一覧は v_books、著者別の冊数は v_author_counts を使う。一覧は count(*) で総数を確かめてから LIMIT/OFFSET でページングし、ORDER BY の最後に asin などの一意な列を置く。read_status = 'UNKNOWN' は「読了マークが付いていない本」と表現する。v_books の subjects(件名の配列)、ndc_label、publisher、paper_issued は NDL サーチの紙版の書誌由来で、bib_match が NULL の本には書誌情報がない(理由は bib_status)。
    ```
 
 ## 開発

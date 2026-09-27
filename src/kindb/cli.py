@@ -203,9 +203,13 @@ def _bib_status_rows(con) -> list[tuple[str, str]]:
            WHERE f.status = 'found' AND NOT EXISTS (SELECT 1 FROM bib_matches m WHERE m.asin = f.asin)"""
     ).fetchone()[0]
     if unmatched:
-        # rematch で採用できる候補がなくなった本。引き直せば、直した規則で検索の段からやり直せる
-        rows.append(("Bib found, unmatched", f"{unmatched} (rerun enrich --refresh)"))
-    overrides = con.execute("SELECT count(*) FROM bib_overrides").fetchone()[0]
+        # rematch で採用できる候補がなくなった本。--where で絞って引き直せば、直した規則で検索の段からやり直せる。
+        # 絞らずに --refresh を案内すると、全冊を数時間かけて引き直してしまう
+        hint = "kindb enrich --refresh --where \"bib_status = 'found' AND bib_match IS NULL\""
+        rows.append(("Bib found, unmatched", f"{unmatched} (rerun: {hint})"))
+    overrides = con.execute(
+        "SELECT count(*) FROM bib_overrides o JOIN books b ON b.asin = o.asin"
+    ).fetchone()[0]
     if overrides:
         rows.append(("Bib overrides", str(overrides)))
     meta = con.execute("SELECT last_enrich_at, last_rematch_at FROM bib_metadata LIMIT 1").fetchone()

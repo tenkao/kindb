@@ -47,7 +47,7 @@ kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB�
 - ジャンルとシリーズは Amazon 公式データ由来と添える。
 - 件名、NDC、ISBN、刊行年月、出版社、ページ数は NDL サーチの紙版の書誌由来と添える。Kindle 版そのものの情報ではない。
 - `paper_issued` は「紙版の刊行年月」と表現する。発売日を聞かれたら、Kindle 版の発売日はないと断ったうえで、目安として示す。
-- `bib_match` が NULL の本には書誌情報がない(未取得、NDL で見つからない、照合を止めた)。「該当なし」ではなく「書誌情報がない」と答える。
+- `bib_match` が NULL の本には書誌情報がない。「該当なし」ではなく「書誌情報がない」と答え、理由は `bib_status` で示す(NULL は未取得、`not_found` は NDL で紙版が見つからない、`incomplete` は検索結果が多すぎて確かめきれない、`excluded` は利用者が照合を止めた、`error` は取得時の通信の失敗)。
 - `bib_match = 'work'` の本は、紙版(単行本と文庫など)が 1 つに定まらず、ISBN、刊行年月、出版社、ページ数、`bib_series` は NULL。件名と NDC はある。
 - 件名はマンガにはほとんど付かないので、件名で探すときは書名での検索も併せて使う。
 
@@ -74,7 +74,8 @@ kindb は、Kindle 蔵書を DuckDB に取り込んだローカルの蔵書 DB�
 | `paper_issued` | 紙版の刊行年月。`2015-04` や `2015` のように記載の精度のまま。年で絞るときは `paper_issued LIKE '2015%'` |
 | `publisher` / `pages` / `bib_series` | 紙版の出版社(複数は `, ` 区切り)、ページ数、叢書名(`講談社文芸文庫 ; つK1` など) |
 | `bib_notes` | 注記の配列(`原タイトル: …` など)。ない本は `[]` |
-| `bib_match` | 書誌情報の照合方法。`edition`(紙版が 1 つ)、`work`(紙版が複数で、作品の属性だけ)、`isbn`(利用者が ISBN を指定)。書誌情報のない本は NULL |
+| `bib_match` | 書誌情報の照合方法。`edition`(紙版が 1 つ)、`work`(紙版が 1 つに定まらず、作品の属性だけ)、`isbn`(利用者が ISBN を指定)。書誌情報のない本は NULL |
+| `bib_status` | 書誌情報の取得の状態。`found` / `not_found` / `incomplete` / `excluded` / `error`。未取得の本は NULL |
 
 ### その他のビュー
 

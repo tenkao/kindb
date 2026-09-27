@@ -237,9 +237,11 @@ SELECT
          WHERE bn.asin = b.asin),
         CAST([] AS VARCHAR[])
     ) AS bib_notes,
-    m.method AS bib_match
+    m.method AS bib_match,
+    f.status AS bib_status
 FROM books b
 LEFT JOIN bib_matches m ON m.asin = b.asin
+LEFT JOIN bib_fetches f ON f.asin = b.asin
 LEFT JOIN v_ndc_labels nl ON nl.ndc3 = substr(m.ndc, 1, 3);
 
 CREATE OR REPLACE VIEW v_author_counts AS

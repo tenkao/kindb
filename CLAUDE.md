@@ -31,6 +31,7 @@ kindb は、Chrome 拡張で取得した `kindle.json`(主データ)と、任意
 - import は `create_schema()` → `BEGIN` → `DELETE`/`INSERT` → `COMMIT` → `CHECKPOINT` の順に実行する。
 - `kindb import` と `kindb import-official` は、それぞれ自分の担当テーブルだけを書き換え、`bib_*` に触れない。`bib_*` を書くのは `enrich` と `rematch` だけで、手動訂正を変えられるのは `enrich` だけ。
 - `enrich` は取得中に DB を開かない。一定冊数ごとに、import と同じ順で対象 ASIN の `bib_*` 行だけを置き換える。
+- `enrich` と `rematch` は DB ごとに 1 つだけ動く(`<db>.enrich.lock` の flock)。`delete` はこのファイルも消す。
 - 照合は精度を優先する。誤った書誌情報を付けるより何も付けない。規則を緩めるときは、標本での誤照合が増えないことを確かめる。
 - スキーマは `create_schema()` の冪等な DDL で作る。`TABLES_SQL` / `VIEWS_SQL` のハッシュが変われば読み取り系コマンドが自動で移行するので、版番号の管理は要らない。既存テーブルの列を変える場合は、移行処理を別に書く。
 - 読み取り系コマンドは、スキーマが最新なら書き込み接続を開かない。並列実行や MCP サーバと共存させるため。

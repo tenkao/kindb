@@ -749,3 +749,34 @@ def test_delete_also_removes_the_enrich_lock_file(imported_db: Path, monkeypatch
     result = runner.invoke(app, ["delete", "--yes", "--db", str(imported_db)])
     assert result.exit_code == 0
     assert not enrich_lock_path(imported_db).exists()
+
+
+def test_status_reports_unmatched_books_overrides_and_last_runs(
+    imported_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_ndl(monkeypatch)
+    csv_path = tmp_path / "o.csv"
+    csv_path.write_text("asin,isbn\nB000TEST02,\nB0NOTINLIB,\n", encoding="utf-8")
+    runner.invoke(app, ["enrich", "--overrides", str(csv_path), "--db", str(imported_db)])
+    con = connect(imported_db)
+    try:
+        # 照合規則が変わり、保存済みの候補から採れなくなった本を作る
+        con.execute("UPDATE bib_candidates SET item_xml = replace(item_xml, 'テストの本', '別の本')")
+    finally:
+        con.close()
+    runner.invoke(app, ["rematch", "--db", str(imported_db)])
+
+    status = runner.invoke(app, ["status", "--db", str(imported_db)]).stdout
+    assert re.search(r"Bib found, unmatched\W+1 \(rerun: kindb enrich --refresh --where", status)
+    # 蔵書にない ASIN の訂正は数えない
+    assert re.search(r"Bib overrides\W+1\b", status)
+    assert "Last enrich" in status and "Last rematch" in status
+
+    rows = json.loads(runner.invoke(app, [
+        "query", "SELECT asin, bib_status, bib_match FROM v_books ORDER BY asin LIMIT 3", "--db", str(imported_db)
+    ]).stdout)
+    assert rows == [
+        {"asin": "B000TEST01", "bib_status": "found", "bib_match": None},
+        {"asin": "B000TEST02", "bib_status": "excluded", "bib_match": None},
+        {"asin": "B000TEST03", "bib_status": "not_found", "bib_match": None},
+    ]
