@@ -14,8 +14,8 @@ from rich.table import Table
 from rich.text import Text
 
 from kindb import sqlguard
-from kindb.db import DatabaseLockedError, connect, ensure_schema, get_db_path, wal_path
-from kindb.enrich import FetchResult, Reporter, Target, run_enrich, run_rematch
+from kindb.db import DatabaseLockedError, connect, enrich_lock_path, ensure_schema, get_db_path, wal_path
+from kindb.enrich import EnrichLockedError, FetchResult, Reporter, Target, run_enrich, run_rematch
 from kindb.importer import import_kindle_json, import_official_zip
 from kindb.ndl import DEFAULT_INTERVAL, NdlClient
 
@@ -43,7 +43,7 @@ def _report_locked_db(func: Callable[..., None]) -> Callable[..., None]:
     def wrapper(*args: object, **kwargs: object) -> None:
         try:
             func(*args, **kwargs)
-        except DatabaseLockedError as e:
+        except (DatabaseLockedError, EnrichLockedError) as e:
             _print_error(str(e))
             raise typer.Exit(1)
 
@@ -391,6 +391,9 @@ class _ConsoleReporter(Reporter):
     def waiting_for_lock(self) -> None:
         err_console.print("Database is in use by another process; waiting to write...")
 
+    def resuming(self, started_at: object) -> None:
+        console.print(f"Resuming the refetch started at {started_at}; skipping books refetched since then.")
+
 
 @app.command()
 @_report_locked_db
@@ -481,6 +484,7 @@ def delete(
     """Delete the database."""
     db_path = get_db_path(db)
     if not db_path.exists() and not wal_path(db_path).exists():
+        enrich_lock_path(db_path).unlink(missing_ok=True)
         console.print("No database to delete.")
         return
 
@@ -492,6 +496,7 @@ def delete(
 
     db_path.unlink(missing_ok=True)
     wal_path(db_path).unlink(missing_ok=True)
+    enrich_lock_path(db_path).unlink(missing_ok=True)
     console.print(_styled("Deleted:", "green", f" {db_path}"), soft_wrap=True)
 
 

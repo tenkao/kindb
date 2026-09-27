@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 import urllib.error
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import pytest
 
 from kindb import enrich
-from kindb.db import DatabaseLockedError, connect
-from kindb.enrich import load_overrides_csv, run_enrich, run_rematch
-from kindb.importer import import_kindle_json
+from kindb.db import DatabaseLockedError, connect, enrich_lock_path
+from kindb.enrich import EnrichLockedError, load_overrides_csv, run_enrich, run_rematch
+from kindb.importer import import_kindle_json, import_official_zip
 from kindb.ndl import NdlError
 from tests.create_fixture import create_kindle_json
+from tests.create_official_fixture import create_official_zip
 from tests.ndl_fixtures import FakeOpenSearch, http_error, item_xml, rss
 
 HIMO = "B0000000A1"
@@ -61,7 +66,8 @@ TOYOTA_ITEM = item_xml("R100000002-I000001376735", "トヨタ生産方式 : 脱�
                        ndc=("", "509.6"), subjects=("トヨタ生産方式",), issued="1978.5", extent="232p",
                        publishers=("ダイヤモンド社",))
 TSUGE_BUNKO = item_xml("R100000002-I030280980", "つげ義春日記", series=("講談社文芸文庫 ; つK1",),
-                       isbn="978-4-06-519067-8", ndc=("10", "726.101"), subjects=("つげ, 義春, 1937-2026",))
+                       isbn="978-4-06-519067-8", ndc=("10", "726.101"), subjects=("つげ, 義春, 1937-2026",),
+                       descriptions=("年譜あり", "出版", " 2020"))
 TSUGE_HARDCOVER = item_xml("R100000002-I000001657059", "つげ義春日記", isbn="4-06-201085-6", issued="1983.12")
 
 HIMO_QUERY = {"title": "理想のヒモ生活", "creator": "日月 ネコ"}
@@ -106,6 +112,8 @@ def test_enrich_saves_state_candidates_and_match(library: Path) -> None:
         (TSUGE, "edition", "9784065190678", "2020-01", "出版社", 200, "講談社文芸文庫 ; つK1", "726.101",
          "漫画．挿絵．童画", ["つげ, 義春, 1937-2026"]),
     ]
+    # 注記からは刊行年だけの値と「出版」を除く
+    assert _rows(library, "SELECT bib_notes FROM v_books WHERE asin = ?", [TSUGE]) == [(["年譜あり"],)]
     assert _rows(library, "SELECT stages FROM bib_fetches WHERE asin = ?", [TOYOTA])[0][0] == (
         '[{"stage": "title_creator", "params": {"title": "トヨタ生産方式", "creator": "大野耐一"}, "total": 1}]'
     )
@@ -630,3 +638,151 @@ def test_split_edition_titles_are_not_searched(tmp_path: Path) -> None:
     assert _rows(db, "SELECT status, stages FROM bib_fetches") == [
         ("not_found", '[{"stage": "skipped", "reason": "split_edition"}]')
     ]
+
+
+# --- 同時実行と引き直しの再開 ----------------------------------------------------------------------------
+
+
+@contextmanager
+def _enrich_lock_held_elsewhere(db: Path) -> Iterator[None]:
+    """別の kindb enrich が動いている状態を、別プロセスがロックファイルを握ることで作る。"""
+    holder = subprocess.Popen(
+        [sys.executable, "-c",
+         "import fcntl, os, sys; fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT); "
+         "fcntl.flock(fd, fcntl.LOCK_EX); print('ready', flush=True); sys.stdin.read()",
+         str(enrich_lock_path(db))],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+    )
+    try:
+        assert holder.stdout.readline().strip() == "ready"
+        yield
+    finally:
+        holder.communicate(input="", timeout=30)
+
+
+def test_enrich_and_rematch_refuse_to_run_beside_another_enrich(library: Path) -> None:
+    ndl = _standard_ndl()
+    with _enrich_lock_held_elsewhere(library):
+        with pytest.raises(EnrichLockedError):
+            run_enrich(library, ndl.client())
+        with pytest.raises(EnrichLockedError):
+            run_rematch(library)
+    assert ndl.calls == []
+    # 相手が終われば動く
+    assert run_enrich(library, ndl.client()).fetched == 3
+
+
+def test_interrupted_refresh_resumes_where_it_stopped(library: Path) -> None:
+    run_enrich(library, _standard_ndl().client())
+    ndl = _standard_ndl()
+
+    def interrupt_on_third_request(count: int) -> None:
+        if count == 3:
+            raise KeyboardInterrupt
+
+    ndl.on_call = interrupt_on_third_request
+    assert run_enrich(library, ndl.client(), refresh=True).interrupted
+
+    ndl = _standard_ndl()
+    summary = run_enrich(library, ndl.client(), refresh=True)
+    assert summary.resumed_from is not None
+    assert summary.targets == 1 and ndl.calls == [TSUGE_QUERY]
+
+    # 引き直しを終えたら、次の --refresh はまた全冊を対象にする
+    ndl = _standard_ndl()
+    summary = run_enrich(library, ndl.client(), refresh=True)
+    assert (summary.resumed_from, summary.targets) == (None, 3)
+
+
+def test_refresh_with_a_limit_continues_with_the_next_books(library: Path) -> None:
+    run_enrich(library, _standard_ndl().client())
+    first = _standard_ndl()
+    run_enrich(library, first.client(), refresh=True, limit=1)
+    second = _standard_ndl()
+    run_enrich(library, second.client(), refresh=True, limit=1)
+    assert first.calls == [HIMO_QUERY]
+    assert second.calls == [TOYOTA_QUERY]
+
+
+def test_rematch_keeps_isbn_overrides_matched_by_isbn(library: Path, tmp_path: Path) -> None:
+    # 訂正は書名が一致しない本を救うためにある。書名の規則で照合し直すと照合結果が消える
+    isbn_item = item_xml("R100000002-I000009999999", "全く別の書名", isbn="978-4-478-46037-5")
+    ndl = FakeOpenSearch([({"isbn": "9784478460375"}, rss([isbn_item]))])
+    run_enrich(library, ndl.client(), where=f"asin = '{TOYOTA}'",
+               overrides_path=_write_overrides(tmp_path, f"{TOYOTA},9784478460375\n"))
+    summary = run_rematch(library)
+    assert (summary.books, summary.changed, summary.lost) == (1, 0, 0)
+    assert _rows(library, "SELECT method, isbn FROM bib_matches") == [("isbn", "9784478460375")]
+
+
+@pytest.mark.parametrize("isbn", ["9784478460375", "4-15-030552-8"])
+def test_adding_or_changing_an_isbn_override_clears_the_old_bibliographic_data(
+    library: Path, tmp_path: Path, isbn: str
+) -> None:
+    run_enrich(library, _standard_ndl().client())
+    if isbn != "9784478460375":
+        run_enrich(library, FakeOpenSearch().client(), where="FALSE",
+                   overrides_path=_write_overrides(tmp_path, f"{TSUGE},9784478460375\n"))
+    # --where の外なので引き直さない。古い書名照合の書誌情報が残らないこと
+    run_enrich(library, FakeOpenSearch().client(), where="FALSE",
+               overrides_path=_write_overrides(tmp_path, f"{TSUGE},{isbn}\n"))
+    for table in ("bib_fetches", "bib_candidates", "bib_matches", "bib_subjects"):
+        assert _rows(library, f"SELECT count(*) FROM {table} WHERE asin = ?", [TSUGE])[0][0] == 0, table
+    assert _rows(library, "SELECT bib_match, subjects FROM v_books WHERE asin = ?", [TSUGE]) == [(None, [])]
+
+
+def _himo_over_limit() -> list[tuple[dict[str, str], str]]:
+    # どの段も、絞り直しても 500 件を超えたままの本(保留になる)
+    return [
+        (HIMO_QUERY, rss([], total=800)),
+        ({"title": "理想のヒモ生活 3", "creator": "日月 ネコ"}, rss([], total=600)),
+        ({"title": "理想のヒモ生活"}, rss([], total=900)),
+    ]
+
+
+def test_refresh_refetches_missing_books_and_isbn_overrides_by_isbn(library: Path, tmp_path: Path) -> None:
+    isbn_item = item_xml("R100000002-I000009999999", "トヨタ生産方式", isbn="978-4-478-46037-5")
+    ndl = FakeOpenSearch([*_himo_over_limit(), ({"isbn": "9784478460375"}, rss([isbn_item]))])
+    run_enrich(library, ndl.client(), overrides_path=_write_overrides(tmp_path, f"{TOYOTA},9784478460375\n"))
+    assert _status(library) == {HIMO: "incomplete", TOYOTA: "found", TSUGE: "not_found"}
+
+    ndl.calls.clear()
+    summary = run_enrich(library, ndl.client(), refresh=True)
+    assert summary.targets == 3
+    assert {"isbn": "9784478460375"} in ndl.calls
+    assert {"title": "トヨタ生産方式", "creator": "大野耐一"} not in ndl.calls
+
+
+def test_incomplete_books_wait_for_retry_missing(library: Path) -> None:
+    ndl = FakeOpenSearch(_himo_over_limit())
+    run_enrich(library, ndl.client(), where=f"asin = '{HIMO}'")
+    assert _status(library) == {HIMO: "incomplete"}
+    assert run_enrich(library, ndl.client(), where=f"asin = '{HIMO}'").targets == 0
+    assert run_enrich(library, ndl.client(), where=f"asin = '{HIMO}'", retry_missing=True).targets == 1
+
+
+def test_stage_resolved_by_refinement_uses_the_refined_results(library: Path) -> None:
+    ndl = FakeOpenSearch(
+        [
+            (HIMO_QUERY, rss([_himo("1"), _himo("2")], total=800)),
+            ({"title": "理想のヒモ生活 3", "creator": "日月 ネコ"}, rss([_himo("3")])),
+        ]
+    )
+    run_enrich(library, ndl.client(), where=f"asin = '{HIMO}'")
+    assert _status(library) == {HIMO: "found"}
+    assert _rows(library, "SELECT candidate_id FROM bib_candidates") == [("R100000002-I000000003",)]
+    stages = json.loads(_rows(library, "SELECT stages FROM bib_fetches")[0][0])
+    assert [s["total"] for s in stages] == [800, 1]
+
+
+def test_imports_leave_every_bibliographic_table_unchanged(library: Path, tmp_path: Path) -> None:
+    run_enrich(library, _standard_ndl().client(), overrides_path=_write_overrides(tmp_path, f"{TOYOTA},\n"))
+    run_rematch(library)
+    tables = [r[0] for r in _rows(library, "SELECT table_name FROM duckdb_tables() WHERE table_name LIKE 'bib_%'")]
+    before = {t: _rows(library, f"SELECT * FROM {t} ORDER BY ALL") for t in tables}
+    assert all(before[t] for t in tables if t != "bib_pending_refresh")
+
+    import_kindle_json(create_kindle_json(tmp_path / "again.json", _kindle_rows(BOOKS)), library)
+    import_official_zip(create_official_zip(tmp_path / "Kindle.zip"), library)
+
+    assert {t: _rows(library, f"SELECT * FROM {t} ORDER BY ALL") for t in tables} == before

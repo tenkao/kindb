@@ -133,6 +133,11 @@ CREATE TABLE IF NOT EXISTS bib_overrides (
     isbn VARCHAR
 );
 
+-- 中断した引き直し(--refresh / --retry-missing)の開始日時。次の引き直しは、この日時以降に取得した本を飛ばす
+CREATE TABLE IF NOT EXISTS bib_pending_refresh (
+    started_at TIMESTAMP NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS bib_metadata (
     last_enrich_at TIMESTAMP,
     last_enrich_fetched INTEGER,
@@ -353,6 +358,11 @@ def get_db_path(db: str | None = None) -> Path:
 def wal_path(db_path: Path | str) -> Path:
     """Return the DuckDB WAL sidecar path for a given DB path."""
     return Path(str(db_path) + ".wal")
+
+
+def enrich_lock_path(db_path: Path | str) -> Path:
+    """kindb enrich / rematch が同時に 1 つだけ動くようにするロックファイルのパス。"""
+    return Path(str(db_path) + ".enrich.lock")
 
 
 class DatabaseLockedError(Exception):

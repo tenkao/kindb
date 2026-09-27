@@ -235,6 +235,7 @@ def test_schema_tables_and_views(imported_db: Path) -> None:
             "bib_metadata",
             "bib_notes",
             "bib_overrides",
+            "bib_pending_refresh",
             "bib_subjects",
             "book_author_ids",
             "book_author_names",

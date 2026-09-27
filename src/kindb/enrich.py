@@ -8,17 +8,18 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import time
-from contextlib import closing
+from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Iterator
 
 import duckdb
 
 from kindb import sqlguard
-from kindb.db import DatabaseLockedError, connect, create_schema
+from kindb.db import DatabaseLockedError, connect, create_schema, enrich_lock_path
 from kindb.matching import (
     Book,
     Match,
@@ -54,6 +55,33 @@ _MISSING = object()
 
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class EnrichLockedError(Exception):
+    """別の kindb enrich か rematch が同じ DB で動いている。"""
+
+
+@contextmanager
+def _exclusive_run(db_path: Path) -> Iterator[None]:
+    """enrich と rematch を DB ごとに 1 つだけ動かす。
+
+    2 つ動くと、NDL への問い合わせが直列でなくなり、片方が選んだときの訂正や状態で、もう片方が書いた訂正や
+    照合結果を上書きする。DuckDB のロックは書き込みの瞬間しか持たないので、実行の間ずっと持つ flock を別に使う。
+    """
+    import fcntl  # Windows にはないので、ここで読み込む(動かす前提は macOS と Linux)
+
+    path = enrich_lock_path(db_path)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as e:
+            raise EnrichLockedError(
+                f"Another kindb enrich or rematch is running on {db_path}. Wait for it to finish, then retry."
+            ) from e
+        yield
+    finally:
+        os.close(fd)
 
 
 # --- 手動訂正 -------------------------------------------------------------------------------------------
@@ -392,15 +420,16 @@ def select_targets(
     con: duckdb.DuckDBPyConnection,
     *,
     where: str | None,
-    limit: int | None,
     retry_missing: bool,
     refresh: bool,
+    skip_fetched_since: datetime | None = None,
 ) -> list[Target]:
+    """skip_fetched_since は、中断した引き直しの開始日時。それ以降に取得した本は引き直し済みとして飛ばす。"""
     condition = f"({where})" if where else "TRUE"
     try:
         rows = con.execute(
             f"""SELECT b.asin, b.title, b.authors_text, b.series_title, f.status,
-                       o.asin IS NOT NULL AS has_override, o.isbn
+                       o.asin IS NOT NULL AS has_override, o.isbn, f.fetched_at
                 FROM v_books b
                 LEFT JOIN bib_fetches f ON f.asin = b.asin
                 LEFT JOIN bib_overrides o ON o.asin = b.asin
@@ -411,9 +440,11 @@ def select_targets(
         raise ValueError(f"Invalid --where condition: {e}") from e
 
     targets = []
-    for asin, title, authors_text, series_title, status, has_override, isbn in rows:
+    for asin, title, authors_text, series_title, status, has_override, isbn, fetched_at in rows:
         # 訂正で ISBN を空にした本は、状態によらず取得しない
         if (has_override and isbn is None) or status == STATUS_EXCLUDED:
+            continue
+        if skip_fetched_since is not None and fetched_at is not None and fetched_at >= skip_fetched_since:
             continue
         if status in (None, STATUS_ERROR):
             pass
@@ -424,8 +455,6 @@ def select_targets(
             if not refresh:
                 continue
         targets.append(Target(Book(asin, title, authors_text, series_title), status, isbn))
-    if limit:
-        targets = targets[:limit]
     return targets
 
 
@@ -442,6 +471,8 @@ class EnrichSummary:
     aborted: str | None = None
     retry_after: float | None = None
     overrides: OverrideChanges | None = None
+    # 中断した引き直しを続けたときの、その引き直しの開始日時
+    resumed_from: datetime | None = None
 
 
 class Reporter:
@@ -453,8 +484,16 @@ class Reporter:
 
     def waiting_for_lock(self) -> None: ...
 
+    def resuming(self, started_at: datetime) -> None: ...
 
-def run_enrich(
+
+def run_enrich(db_path: Path, client: NdlClient, **options: object) -> EnrichSummary:
+    """取得を実行する。同じ DB で別の enrich か rematch が動いていれば EnrichLockedError。"""
+    with _exclusive_run(db_path):
+        return _run_enrich_locked(db_path, client, **options)
+
+
+def _run_enrich_locked(
     db_path: Path,
     client: NdlClient,
     *,
@@ -480,6 +519,10 @@ def run_enrich(
             db_path, max_wait, connector=connector, sleep=sleep, on_wait=reporter.waiting_for_lock
         )
 
+    started_at = _now()
+    # 引き直し(--refresh / --retry-missing)は状態だけでは続きが分からないので、開始日時を残して再開に使う
+    refetching = refresh or retry_missing
+
     # 0. スキーマを最新にし、訂正を置き換える(短い書き込みトランザクション)
     with closing(open_for_write(FINAL_LOCK_WAIT)) as con:
         create_schema(con)
@@ -496,16 +539,31 @@ def run_enrich(
             except Exception:
                 _rollback_quietly(con)
                 raise
+        if refetching:
+            pending = con.execute("SELECT min(started_at) FROM bib_pending_refresh").fetchone()[0]
+            if pending is None:
+                con.execute("INSERT INTO bib_pending_refresh VALUES (?)", [started_at])
+            summary.resumed_from = pending
         con.execute("CHECKPOINT")
 
     # 1. 読み取り専用で対象を選ぶ
     with closing(connect(db_path, read_only=True)) as con:
-        targets = select_targets(con, where=where, limit=limit, retry_missing=retry_missing, refresh=refresh)
+        targets = select_targets(
+            con,
+            where=where,
+            retry_missing=retry_missing,
+            refresh=refresh,
+            skip_fetched_since=summary.resumed_from,
+        )
+    truncated = bool(limit) and len(targets) > limit
+    if limit:
+        targets = targets[:limit]
     summary.targets = len(targets)
+    if summary.resumed_from is not None:
+        reporter.resuming(summary.resumed_from)
     reporter.start(len(targets), client.interval)
 
     # 2〜4. DB を閉じたまま引き、一定冊数ごとにまとめて書く
-    started_at = _now()
     buffer: list[FetchResult] = []
     consecutive_errors = 0
     # 次に書き込みを試す時点のバッファの冊数。書き込みを諦めたら、さらに batch_size 冊引いてから試し直す。
@@ -548,6 +606,12 @@ def run_enrich(
         summary.interrupted = True
     finally:
         flush(FINAL_LOCK_WAIT)
+
+    if refetching and not (summary.interrupted or summary.aborted or truncated):
+        # 対象をすべて引き直し終えたときだけ、再開の目印を消す。--limit で打ち切った回は、次の回が続きを引く
+        with closing(open_for_write(FINAL_LOCK_WAIT)) as con:
+            con.execute("DELETE FROM bib_pending_refresh")
+            con.execute("CHECKPOINT")
     return summary
 
 
@@ -587,12 +651,24 @@ def run_rematch(
     on_wait: Callable[[], None] | None = None,
 ) -> RematchSummary:
     """保存済みの候補と訂正だけで照合をやり直す。通信せず、訂正も変えない。対象は状態が found の本だけ。"""
+    with _exclusive_run(db_path):
+        return _run_rematch_locked(db_path, connector=connector, sleep=sleep, on_wait=on_wait)
+
+
+def _run_rematch_locked(
+    db_path: Path,
+    *,
+    connector: Connector,
+    sleep: Callable[[float], None],
+    on_wait: Callable[[], None] | None,
+) -> RematchSummary:
     with closing(connect(db_path, read_only=True)) as con:
+        # ISBN の訂正で引いた本かどうかは、訂正の表ではなく取得の記録で決める。訂正を変えると取得の記録も
+        # 消えるので同じはずだが、書名で引いた候補に ISBN の規則を当てて全巻を採ることがないようにする
         books = con.execute(
-            """SELECT f.asin, b.title, b.authors_text, b.series_title, o.isbn
+            """SELECT f.asin, b.title, b.authors_text, b.series_title, f.source
                FROM bib_fetches f
                JOIN v_books b ON b.asin = f.asin
-               LEFT JOIN bib_overrides o ON o.asin = f.asin
                WHERE f.status = ?
                ORDER BY f.asin""",
             [STATUS_FOUND],
@@ -623,9 +699,9 @@ def run_rematch(
 
     summary = RematchSummary(books=len(books))
     matches: dict[str, Match | None] = {}
-    for asin, title, authors_text, series_title, override_isbn in books:
+    for asin, title, authors_text, series_title, source in books:
         records = candidates.get(asin, [])
-        if override_isbn:
+        if source == "isbn":
             match = decide_isbn_match(records)
         else:
             match = decide_match(Book(asin, title, authors_text, series_title), records)

@@ -16,7 +16,7 @@ import pytest
 from typer.testing import CliRunner
 
 from kindb.cli import app
-from kindb.db import connect
+from kindb.db import connect, enrich_lock_path
 from kindb.importer import import_kindle_json
 from tests.create_fixture import create_kindle_json
 from tests.ndl_fixtures import FakeOpenSearch, http_error, item_xml, rss
@@ -720,3 +720,32 @@ def test_enrich_exits_1_when_ndl_asks_to_wait(imported_db: Path, monkeypatch: py
     result = runner.invoke(app, ["enrich", "--db", str(imported_db)])
     assert result.exit_code == 1
     assert "NDL Search asked to wait 3600 seconds" in result.stderr
+
+
+def test_second_enrich_is_reported_in_one_line(imported_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_ndl(monkeypatch)
+    holder = subprocess.Popen(
+        [sys.executable, "-c",
+         "import fcntl, os, sys; fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT); "
+         "fcntl.flock(fd, fcntl.LOCK_EX); print('ready', flush=True); sys.stdin.read()",
+         str(enrich_lock_path(imported_db))],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+    )
+    try:
+        assert holder.stdout.readline().strip() == "ready"
+        for command in (["enrich"], ["rematch"]):
+            result = runner.invoke(app, [*command, "--db", str(imported_db)])
+            assert result.exit_code == 1
+            assert result.stderr.startswith("Error: Another kindb enrich or rematch is running on ")
+            assert result.stderr.count("\n") == 1
+    finally:
+        holder.communicate(input="", timeout=30)
+
+
+def test_delete_also_removes_the_enrich_lock_file(imported_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_ndl(monkeypatch)
+    runner.invoke(app, ["enrich", "--limit", "1", "--db", str(imported_db)])
+    assert enrich_lock_path(imported_db).exists()
+    result = runner.invoke(app, ["delete", "--yes", "--db", str(imported_db)])
+    assert result.exit_code == 0
+    assert not enrich_lock_path(imported_db).exists()
