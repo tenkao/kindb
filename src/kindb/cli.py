@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import json
+import math
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -413,6 +414,9 @@ def enrich(
     db: Optional[str] = _db_option(),
 ) -> None:
     """Fetch bibliographic data from NDL Search and match it to books."""
+    if not math.isfinite(interval):
+        # nan は「3.0 未満」の検査を通り、待ち時間なしで問い合わせてしまう
+        raise typer.BadParameter("must be a finite number of seconds", param_hint="--interval")
     db_path = _require_db(db)
     try:
         summary = run_enrich(
@@ -443,6 +447,12 @@ def enrich(
     if summary.interrupted:
         err_console.print(_styled("Interrupted.", "yellow", " Saved the books fetched so far; rerun to resume."))
         raise typer.Exit(130)
+    if summary.aborted == "retry_later":
+        _print_error(
+            f"NDL Search asked to wait {summary.retry_after:.0f} seconds. "
+            "Stopped and saved the books fetched so far; retry after that."
+        )
+        raise typer.Exit(1)
     if summary.aborted:
         _print_error(
             "Stopped after repeated failures to reach NDL Search. Saved the books fetched so far; retry later."

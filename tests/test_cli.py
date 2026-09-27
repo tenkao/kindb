@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 import sys
+import urllib.error
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -18,7 +19,7 @@ from kindb.cli import app
 from kindb.db import connect
 from kindb.importer import import_kindle_json
 from tests.create_fixture import create_kindle_json
-from tests.ndl_fixtures import FakeOpenSearch, item_xml, rss
+from tests.ndl_fixtures import FakeOpenSearch, http_error, item_xml, rss
 
 runner = CliRunner()
 
@@ -676,3 +677,46 @@ def test_search_matches_ndl_subjects_without_showing_them(imported_db: Path, mon
     assert "B000TEST01" in result.stdout
     assert "試験用件名" not in result.stdout
     assert "Showing 1 of 1 results." in result.stdout
+
+
+@pytest.mark.parametrize("value", ["2.9", "nan"])
+def test_enrich_rejects_intervals_below_the_floor_or_not_finite(imported_db: Path, value: str) -> None:
+    result = runner.invoke(app, ["enrich", "--interval", value, "--db", str(imported_db)])
+    assert result.exit_code == 2
+
+
+def test_enrich_passes_where_limit_and_interval(imported_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ndl = _fake_ndl(monkeypatch)
+    intervals: list[float] = []
+    monkeypatch.setattr("kindb.cli._ndl_client", lambda interval: intervals.append(interval) or ndl.client())
+    result = runner.invoke(
+        app, ["enrich", "--where", "asin > 'B000TEST01'", "--limit", "2", "--interval", "4.5", "--db", str(imported_db)]
+    )
+    assert result.exit_code == 0, result.output
+    assert intervals == [4.5]
+    assert "[1/2] B000TEST02" in result.stdout and "[2/2] B000TEST03" in result.stdout
+    assert "Fetched 2 of 2 books" in result.stdout
+
+
+def test_enrich_passes_retry_missing_and_refresh(imported_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_ndl(monkeypatch)
+    runner.invoke(app, ["enrich", "--db", str(imported_db)])
+    assert "Fetched 0 of 0 books." in runner.invoke(app, ["enrich", "--db", str(imported_db)]).stdout
+    assert "Fetched 4 of 4 books" in runner.invoke(app, ["enrich", "--retry-missing", "--db", str(imported_db)]).stdout
+    assert "Fetched 5 of 5 books" in runner.invoke(app, ["enrich", "--refresh", "--db", str(imported_db)]).stdout
+
+
+def test_enrich_exits_1_when_it_stops_on_repeated_failures(imported_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ndl = _fake_ndl(monkeypatch)
+    ndl.on_call = lambda _: (_ for _ in ()).throw(urllib.error.URLError("down"))
+    result = runner.invoke(app, ["enrich", "--db", str(imported_db)])
+    assert result.exit_code == 1
+    assert "Stopped after repeated failures to reach NDL Search" in result.stderr
+
+
+def test_enrich_exits_1_when_ndl_asks_to_wait(imported_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ndl = _fake_ndl(monkeypatch)
+    ndl.on_call = lambda _: (_ for _ in ()).throw(http_error(429, retry_after="3600"))
+    result = runner.invoke(app, ["enrich", "--db", str(imported_db)])
+    assert result.exit_code == 1
+    assert "NDL Search asked to wait 3600 seconds" in result.stderr

@@ -14,7 +14,7 @@ from kindb.enrich import load_overrides_csv, run_enrich, run_rematch
 from kindb.importer import import_kindle_json
 from kindb.ndl import NdlError
 from tests.create_fixture import create_kindle_json
-from tests.ndl_fixtures import FakeOpenSearch, item_xml, rss
+from tests.ndl_fixtures import FakeOpenSearch, http_error, item_xml, rss
 
 HIMO = "B0000000A1"
 TOYOTA = "B0000000A2"
@@ -452,21 +452,65 @@ def test_lock_conflict_on_write_is_retried(library: Path) -> None:
     assert len(_status(library)) == 3
 
 
-def test_batch_that_stays_locked_is_written_with_the_next_batch(library: Path) -> None:
-    attempts = []
+def test_each_batch_is_written_while_the_run_continues(library: Path) -> None:
+    # 取得中は DB を開いていないので、別の接続から途中の書き込みが見える
+    ndl = _standard_ndl()
+    seen: dict[int, dict[str, str]] = {}
+    ndl.on_call = lambda count: seen.setdefault(count, _status(library))
+    run_enrich(library, ndl.client(), batch_size=1)
+    assert seen[1] == {}
+    assert seen[2] == {HIMO: "found"}
+    assert seen[3] == {HIMO: "found", TOYOTA: "found"}
 
-    def connect_locked_during_run(db_path: Path):
+
+def test_batch_that_stays_locked_is_kept_and_written_with_the_next_batch(library: Path) -> None:
+    attempts: list[Path] = []
+
+    def connect_locked_for_first_batch(db_path: Path):
         attempts.append(db_path)
-        # 1 回目の途中の書き込みは待っても空かず、最後の書き込みで空く
-        if 1 < len(attempts) < 8:
+        # 開始時の書き込みは通し、1 冊目の書き込みを 30 秒ぶん(7 回)待っても空かないようにする
+        if 2 <= len(attempts) <= 8:
             raise DatabaseLockedError("locked")
         return connect(db_path)
 
+    ndl = _standard_ndl()
+    seen: dict[int, dict[str, str]] = {}
+    ndl.on_call = lambda count: seen.setdefault(count, _status(library))
     summary = run_enrich(
-        library, _standard_ndl().client(), connector=connect_locked_during_run, sleep=lambda _: None, batch_size=1
+        library, ndl.client(), connector=connect_locked_for_first_batch, sleep=lambda _: None, batch_size=1
     )
     assert summary.fetched == 3
+    # 1 冊目は諦めた書き込みのあともバッファに残り、2 冊目と一緒に書かれる
+    assert seen[2] == {}
+    assert seen[3] == {HIMO: "found", TOYOTA: "found"}
     assert len(_status(library)) == 3
+
+
+def test_after_giving_up_a_write_the_next_try_waits_for_another_batch(tmp_path: Path) -> None:
+    books = [{"asin": f"B00000LCK{i}", "title": f"本{i}", "authors": "著者"} for i in range(1, 7)]
+    db = tmp_path / "lock.duckdb"
+    import_kindle_json(create_kindle_json(tmp_path / "lock.json", _kindle_rows(books)), db)
+    state = {"fetched": 0}
+    waits_at: list[int] = []
+
+    class Recorder(enrich.Reporter):
+        def book(self, index, total, target, result) -> None:
+            state["fetched"] = index
+
+        def waiting_for_lock(self) -> None:
+            waits_at.append(state["fetched"])
+
+    def connect_locked_until_done(db_path: Path):
+        if 0 < state["fetched"] < 6:
+            raise DatabaseLockedError("locked")
+        return connect(db_path)
+
+    summary = run_enrich(db, FakeOpenSearch().client(), connector=connect_locked_until_done,
+                         sleep=lambda _: None, batch_size=2, reporter=Recorder())
+    assert summary.fetched == 6
+    # 2 冊ごとに試し直す。諦めた直後から 1 冊ごとに試すと、1 冊ごとに 30 秒待つ
+    assert waits_at == [2, 4]
+    assert len(_status(db)) == 6
 
 
 def test_final_write_that_stays_locked_raises(library: Path) -> None:
@@ -509,3 +553,80 @@ def test_fetch_book_turns_client_errors_into_error_results() -> None:
         [],
         None,
     )
+
+
+# --- 取得の実行の細部 -----------------------------------------------------------------------------------
+
+
+def _numbered_library(tmp_path: Path, count: int) -> Path:
+    # 書名の末尾の数字は巻数と読まれるので、かなで区別する
+    books = [{"asin": f"B0000NUM{i:02d}", "title": f"本{chr(0x3042 + i)}", "authors": "著者"} for i in range(count)]
+    db = tmp_path / "numbered.duckdb"
+    import_kindle_json(create_kindle_json(tmp_path / "numbered.json", _kindle_rows(books)), db)
+    return db
+
+
+def test_a_success_between_failures_resets_the_consecutive_error_count(tmp_path: Path) -> None:
+    db = _numbered_library(tmp_path, 9)
+    down = urllib.error.URLError("down")
+    ndl = FakeOpenSearch([({"title": f"本{chr(0x3042 + i)}", "creator": "著者"}, down) for i in range(9) if i != 4])
+    summary = run_enrich(db, ndl.client())
+    assert not summary.aborted
+    assert summary.counts == {"error": 8, "not_found": 1}
+
+
+def test_run_stops_when_ndl_asks_to_wait_too_long(library: Path) -> None:
+    ndl = _standard_ndl()
+    ndl.routes.insert(0, (TOYOTA_QUERY, http_error(429, retry_after="3600")))
+    summary = run_enrich(library, ndl.client())
+    assert (summary.aborted, summary.retry_after, summary.fetched) == ("retry_later", 3600.0, 1)
+    assert ndl.calls == [HIMO_QUERY, TOYOTA_QUERY]
+    assert _status(library) == {HIMO: "found"}
+
+
+@pytest.mark.parametrize(("total", "status"), [(500, "found"), (501, "incomplete")])
+def test_exactly_500_results_count_as_seen_in_full(library: Path, total: int, status: str) -> None:
+    ndl = FakeOpenSearch([(HIMO_QUERY, rss([_himo("3")], total=total)),
+                          ({"title": "理想のヒモ生活 3", "creator": "日月 ネコ"}, rss([_himo("3")], total=total))])
+    run_enrich(library, ndl.client(), where=f"asin = '{HIMO}'")
+    assert _status(library) == {HIMO: status}
+
+
+def test_only_ndl_paper_books_are_saved_as_candidates(library: Path) -> None:
+    audio = item_xml("R100000002-I000000901", "トヨタ生産方式", categories=("録音資料", "記録メディア"))
+    digital = item_xml("R100000002-I000000902", "トヨタ生産方式", categories=("図書", "デジタル"))
+    other_provider = item_xml("R100000136-I000000903", "トヨタ生産方式")
+    ndl = FakeOpenSearch([(TOYOTA_QUERY, rss([audio, digital, other_provider, TOYOTA_ITEM]))])
+    run_enrich(library, ndl.client(), where=f"asin = '{TOYOTA}'")
+    assert _rows(library, "SELECT candidate_id FROM bib_candidates") == [("R100000002-I000001376735",)]
+
+
+def test_the_same_query_is_not_sent_twice_for_a_book(library: Path) -> None:
+    # 書名だけの段の絞り直しは、書名と著者の段の検索と同じ条件になる
+    ndl = FakeOpenSearch([(HIMO_QUERY, rss([], total=800)),
+                          ({"title": "理想のヒモ生活 3", "creator": "日月 ネコ"}, rss([], total=600)),
+                          ({"title": "理想のヒモ生活"}, rss([], total=900))])
+    run_enrich(library, ndl.client(), where=f"asin = '{HIMO}'")
+    assert ndl.calls == [HIMO_QUERY, {"title": "理想のヒモ生活 3", "creator": "日月 ネコ"}, {"title": "理想のヒモ生活"}]
+    assert _status(library) == {HIMO: "incomplete"}
+
+
+def test_invalid_where_is_reported_before_overrides_are_applied(library: Path, tmp_path: Path) -> None:
+    run_enrich(library, _standard_ndl().client(), where=f"asin = '{TOYOTA}'")
+    with pytest.raises(ValueError, match="Invalid --where"):
+        run_enrich(library, _standard_ndl().client(), where="titel LIKE 'トヨタ%'",
+                   overrides_path=_write_overrides(tmp_path, f"{TOYOTA},9784478460375\n"))
+    assert _rows(library, "SELECT count(*) FROM bib_overrides")[0][0] == 0
+    assert _status(library) == {TOYOTA: "found"}
+
+
+def test_split_edition_titles_are_not_searched(tmp_path: Path) -> None:
+    books = [{"asin": "B0000SPLIT", "title": "理想のヒモ生活【分冊版】　12", "authors": "日月 ネコ"}]
+    db = tmp_path / "split.duckdb"
+    import_kindle_json(create_kindle_json(tmp_path / "split.json", _kindle_rows(books)), db)
+    ndl = FakeOpenSearch()
+    run_enrich(db, ndl.client())
+    assert ndl.calls == []
+    assert _rows(db, "SELECT status, stages FROM bib_fetches") == [
+        ("not_found", '[{"stage": "skipped", "reason": "split_edition"}]')
+    ]

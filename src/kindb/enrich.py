@@ -31,7 +31,7 @@ from kindb.matching import (
     parse_kindle_title,
     search_stages,
 )
-from kindb.ndl import MAX_RESULTS, NdlClient, NdlError, NdlRecord, SearchResponse, parse_item
+from kindb.ndl import MAX_RESULTS, NdlClient, NdlError, NdlRecord, NdlRetryLater, SearchResponse, parse_item
 
 STATUS_FOUND = "found"
 STATUS_NOT_FOUND = "not_found"
@@ -438,7 +438,9 @@ class EnrichSummary:
     fetched: int = 0
     counts: dict[str, int] = field(default_factory=dict)
     interrupted: bool = False
-    aborted: bool = False
+    # 取得を途中で止めた理由。"network"(連続した通信の失敗)か "retry_later"(長い Retry-After)
+    aborted: str | None = None
+    retry_after: float | None = None
     overrides: OverrideChanges | None = None
 
 
@@ -469,6 +471,7 @@ def run_enrich(
     reporter = reporter or Reporter()
     if where is not None:
         validate_where(where)
+    # 訂正の CSV も --where も、DB を書き換える前に確かめる
     overrides = load_overrides_csv(overrides_path) if overrides_path else None
     summary = EnrichSummary()
 
@@ -480,6 +483,11 @@ def run_enrich(
     # 0. スキーマを最新にし、訂正を置き換える(短い書き込みトランザクション)
     with closing(open_for_write(FINAL_LOCK_WAIT)) as con:
         create_schema(con)
+        if where is not None:
+            try:
+                con.execute(f"SELECT asin FROM v_books WHERE ({where}) LIMIT 0")
+            except duckdb.Error as e:
+                raise ValueError(f"Invalid --where condition: {e}") from e
         if overrides is not None:
             con.execute("BEGIN TRANSACTION")
             try:
@@ -500,33 +508,41 @@ def run_enrich(
     started_at = _now()
     buffer: list[FetchResult] = []
     consecutive_errors = 0
+    # 次に書き込みを試す時点のバッファの冊数。書き込みを諦めたら、さらに batch_size 冊引いてから試し直す。
+    # 諦めた直後から 1 冊ごとに試すと、ロックが長く続くあいだ 1 冊あたり 30 秒ずつ待つことになる
+    next_flush_at = batch_size
 
-    def flush(max_wait: float) -> None:
+    def flush(max_wait: float) -> bool:
         if not buffer:
-            return
+            return True
         try:
             con = open_for_write(max_wait)
         except DatabaseLockedError:
             if max_wait >= FINAL_LOCK_WAIT:
                 raise
-            return  # 次の書き込みでまとめて書き直す
+            return False  # 結果を持ったまま取得を続け、次の書き込みでまとめて書く
         with closing(con):
             write_results(con, buffer, _now(), run_started_at=started_at, run_fetched=summary.fetched)
         buffer.clear()
+        return True
 
     try:
         for index, target in enumerate(targets, start=1):
-            result = fetch_book(client, target.book, target.override_isbn)
+            try:
+                result = fetch_book(client, target.book, target.override_isbn)
+            except NdlRetryLater as e:
+                summary.aborted, summary.retry_after = "retry_later", e.seconds
+                break
             buffer.append(result)
             summary.fetched += 1
             summary.counts[result.status] = summary.counts.get(result.status, 0) + 1
             reporter.book(index, len(targets), target, result)
             consecutive_errors = consecutive_errors + 1 if result.status == STATUS_ERROR else 0
             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
-                summary.aborted = True
+                summary.aborted = "network"
                 break
-            if len(buffer) >= batch_size:
-                flush(BATCH_LOCK_WAIT)
+            if len(buffer) >= next_flush_at:
+                next_flush_at = batch_size if flush(BATCH_LOCK_WAIT) else len(buffer) + batch_size
     except KeyboardInterrupt:
         # Ctrl-C でも、取得済みの結果を書いてから終わる。次の実行はここから再開する
         summary.interrupted = True

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import http.client
 import importlib.metadata
 import re
 import time
@@ -56,7 +57,18 @@ _WRAPPER_OPEN = "<rss " + " ".join(f'xmlns:{prefix}="{uri}"' for prefix, uri in 
 
 
 class NdlError(Exception):
-    """NDL サーチから結果を得られなかった(通信の失敗、HTTP エラー、解析できない応答)。"""
+    """NDL サーチから結果を得られなかった(通信の失敗、HTTP エラー、解析できない応答)。その 1 冊だけの失敗として扱う。"""
+
+
+class NdlRetryLater(Exception):
+    """NDL サーチが MAX_RETRY_AFTER を超えて待つよう求めた。1 冊の失敗ではなく、取得そのものを止める。
+
+    上限で切り詰めて再試行すると、取得先が静かにしてほしいと指定した間に問い合わせを重ねるため。
+    """
+
+    def __init__(self, seconds: float) -> None:
+        super().__init__(f"NDL Search asked to wait {seconds:.0f} seconds before the next request")
+        self.seconds = seconds
 
 
 @dataclass(frozen=True)
@@ -234,12 +246,17 @@ class NdlClient:
                 self.request_count += 1
                 return self._fetch(url, self._user_agent)
             except urllib.error.HTTPError as e:
+                wait = _retry_after_seconds(e.headers.get("Retry-After") if e.headers else None)
+                if e.code == 429 and wait is not None and wait > MAX_RETRY_AFTER:
+                    raise NdlRetryLater(wait) from e
                 if e.code != 429 or attempt == MAX_429_RETRIES:
                     raise NdlError(f"HTTP {e.code} from NDL Search") from e
-                wait = _retry_after_seconds(e.headers.get("Retry-After") if e.headers else None)
-                self._sleep(min(wait if wait is not None else 60.0 * (attempt + 1), MAX_RETRY_AFTER))
-            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                self._sleep(wait if wait is not None else 60.0 * (attempt + 1))
+            except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as e:
+                # 応答の途中で切れた接続(IncompleteRead)は OSError ではなく HTTPException として来る
                 raise NdlError(f"Could not reach NDL Search: {e}") from e
+            except UnicodeDecodeError as e:
+                raise NdlError(f"Unparseable NDL response: {e}") from e
             finally:
                 self._last_request = self._clock()
         raise AssertionError("unreachable")

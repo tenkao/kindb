@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import http.client
+import time
 import urllib.error
 import urllib.parse
+from email.utils import formatdate
 
 import pytest
 
 from kindb.matching import is_candidate
-from kindb.ndl import DPID, MAX_RESULTS, NdlClient, NdlError, parse_item, parse_response
+from kindb.ndl import DPID, MAX_RESULTS, NdlClient, NdlError, NdlRetryLater, parse_item, parse_response
 from tests.ndl_fixtures import FIXTURE_DIR, http_error, rss
 
 
@@ -83,7 +86,8 @@ def test_client_sends_dpid_and_max_count_and_waits_between_requests() -> None:
 
     def fetch(url: str, user_agent: str) -> str:
         urls.append(url)
-        assert user_agent.startswith("kindb/")
+        # 取得先が連絡できるよう、名前と連絡先の URL を送る
+        assert user_agent.startswith("kindb/") and user_agent.endswith("(+https://github.com/tenkao/kindb)")
         clock.now += 0.5  # 応答に 0.5 秒かかる
         return rss([])
 
@@ -126,9 +130,43 @@ def test_client_gives_up_after_repeated_429() -> None:
     assert [s for s in clock.sleeps if s >= 60] == [60.0, 120.0, 180.0]
 
 
+def test_client_waits_for_retry_after_given_as_http_date() -> None:
+    clock = _Clock()
+    responses = [http_error(429, retry_after=formatdate(time.time() + 30, usegmt=True))]
+
+    def fetch(url: str, user_agent: str) -> str:
+        if responses:
+            raise responses.pop()
+        return rss([])
+
+    NdlClient(interval=3.0, fetch=fetch, sleep=clock.sleep, clock=clock).search({"title": "x"})
+    assert 25 <= clock.sleeps[0] <= 31
+
+
+def test_client_stops_instead_of_retrying_early_when_asked_to_wait_too_long() -> None:
+    clock = _Clock()
+    calls = []
+
+    def fetch(url: str, user_agent: str) -> str:
+        calls.append(url)
+        raise http_error(429, retry_after="3600")
+
+    with pytest.raises(NdlRetryLater) as info:
+        NdlClient(interval=3.0, fetch=fetch, sleep=clock.sleep, clock=clock).search({"title": "x"})
+    assert info.value.seconds == 3600
+    assert len(calls) == 1 and clock.sleeps == []
+
+
 @pytest.mark.parametrize(
     "error",
-    [http_error(500), urllib.error.URLError("no route"), TimeoutError("timed out")],
+    [
+        http_error(500),
+        urllib.error.URLError("no route"),
+        TimeoutError("timed out"),
+        # 応答の途中で切れた接続は OSError ではなく HTTPException として来る
+        http.client.IncompleteRead(b"<rss", 100),
+        UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"),
+    ],
 )
 def test_client_reports_other_failures_without_retrying(error: Exception) -> None:
     calls = []
