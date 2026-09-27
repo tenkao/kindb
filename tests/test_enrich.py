@@ -780,9 +780,74 @@ def test_imports_leave_every_bibliographic_table_unchanged(library: Path, tmp_pa
     run_rematch(library)
     tables = [r[0] for r in _rows(library, "SELECT table_name FROM duckdb_tables() WHERE table_name LIKE 'bib_%'")]
     before = {t: _rows(library, f"SELECT * FROM {t} ORDER BY ALL") for t in tables}
-    assert all(before[t] for t in tables if t != "bib_pending_refresh")
+    assert all(before[t] for t in tables if not t.startswith("bib_refetch_"))
 
     import_kindle_json(create_kindle_json(tmp_path / "again.json", _kindle_rows(BOOKS)), library)
     import_official_zip(create_official_zip(tmp_path / "Kindle.zip"), library)
 
     assert {t: _rows(library, f"SELECT * FROM {t} ORDER BY ALL") for t in tables} == before
+
+
+def _interrupt_on(call: int):
+    def on_call(count: int) -> None:
+        if count == call:
+            raise KeyboardInterrupt
+
+    return on_call
+
+
+def test_refetch_with_a_different_scope_discards_the_unfinished_one(library: Path) -> None:
+    run_enrich(library, _standard_ndl().client())
+    ndl = _standard_ndl()
+    ndl.on_call = _interrupt_on(2)
+    run_enrich(library, ndl.client(), refresh=True)
+
+    # status の案内のような、範囲を絞った引き直しは、全体の引き直しの記録で本を飛ばさない
+    ndl = _standard_ndl()
+    summary = run_enrich(library, ndl.client(), refresh=True, where=f"asin = '{HIMO}'")
+    assert summary.resumed_from is None and summary.discarded_refetch is not None
+    assert ndl.calls == [HIMO_QUERY]
+    # 捨てたので、次の全体の引き直しは最初から引く
+    assert run_enrich(library, _standard_ndl().client(), refresh=True).targets == 3
+
+
+def test_books_fetched_by_a_plain_run_are_still_refetched_on_resume(library: Path) -> None:
+    run_enrich(library, _standard_ndl().client(), limit=2)
+    ndl = _standard_ndl()
+    ndl.on_call = _interrupt_on(2)
+    run_enrich(library, ndl.client(), refresh=True)  # HIMO だけ引き直して中断
+    run_enrich(library, _standard_ndl().client())  # 通常の実行で TSUGE を旧規則で取得
+
+    ndl = _standard_ndl()
+    summary = run_enrich(library, ndl.client(), refresh=True)
+    assert (summary.resumed_skipped, summary.targets) == (1, 2)
+    assert ndl.calls == [TOYOTA_QUERY, TSUGE_QUERY]
+
+
+def test_resumed_refetch_retries_books_that_failed(library: Path) -> None:
+    ndl = _standard_ndl()
+    ndl.routes.insert(0, (TOYOTA_QUERY, urllib.error.URLError("down")))
+    ndl.on_call = _interrupt_on(3)
+    run_enrich(library, ndl.client(), retry_missing=True)
+    assert _status(library) == {HIMO: "found", TOYOTA: "error"}
+
+    ndl = _standard_ndl()
+    summary = run_enrich(library, ndl.client(), retry_missing=True)
+    assert summary.resumed_skipped == 1
+    assert ndl.calls == [TOYOTA_QUERY, TSUGE_QUERY]
+
+
+def test_where_that_fails_only_when_evaluated_is_reported_before_overrides(library: Path, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Invalid --where"):
+        run_enrich(library, _standard_ndl().client(), refresh=True, where="acquired_at > 'yesterday'",
+                   overrides_path=_write_overrides(tmp_path, f"{TSUGE},\n"))
+    assert _rows(library, "SELECT count(*) FROM bib_overrides")[0][0] == 0
+    assert _rows(library, "SELECT count(*) FROM bib_refetch_pending")[0][0] == 0
+
+
+def test_lock_is_shared_by_a_symlinked_db_path(library: Path, tmp_path: Path) -> None:
+    alias = tmp_path / "alias.duckdb"
+    alias.symlink_to(library)
+    with _enrich_lock_held_elsewhere(library):
+        with pytest.raises(EnrichLockedError):
+            run_rematch(alias)

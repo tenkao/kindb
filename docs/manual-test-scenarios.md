@@ -413,7 +413,7 @@ kindb query --table "
 ```
 
 期待:
-- `SHOW TABLES`: `books`, `book_authors`, `import_metadata` に加え、`book_genres`, `book_series`, `book_author_ids`, `book_author_names`, `import_metadata_official`, `schema_meta`, `bib_*` の 8 テーブルと、`v_ndc_labels` を含む view 群が表示される。
+- `SHOW TABLES`: `books`, `book_authors`, `import_metadata` に加え、`book_genres`, `book_series`, `book_author_ids`, `book_author_names`, `import_metadata_official`, `schema_meta`, `bib_*` の 9 テーブルと、`v_ndc_labels` を含む view 群が表示される。
 - `DESCRIBE v_books`: `genres`, `series_title`, `series_asin`, `series_position`, `author_ids`, `author_names_official` に加え、`isbn`, `paper_issued`, `publisher`, `pages`, `bib_series`, `ndc`, `ndc_label`, `subjects`, `bib_notes`, `bib_match`, `bib_status` が表示される。
 - `SELECT * FROM v_books`: 1 ASIN 1 行で並び、`authors` 配列・`authors_text`・`product_image_url`・`read_status`・`acquired_at` に加え、`genres`, `series_title`, `series_asin`, `series_position`, `author_ids`, `author_names_official` が表示される。
 - `SELECT * FROM v_author_counts`: `book_count DESC, author_name ASC` で並ぶ。
@@ -505,7 +505,8 @@ kindb enrich --refresh --db "$BIB_DB"
 
 期待:
 - 1 回目: `Interrupted. Saved the books fetched so far; rerun to resume.` が stderr に出て、`exit=130`。トレースバックは出ない。
-- 2 回目: `Resuming the refetch started at …` の行が出て、1 回目に引き直した本を飛ばし、残りの本だけを引く(`Fetching 2 books` 前後。中断の瞬間によって 2 か 3)。
+- 1 回目のあと `kindb status --db "$BIB_DB"` に `Bib refetch unfinished` の行が出る。
+- 2 回目: `Resuming the refetch started at …; skipping N books already refetched.` の行が出て、1 回目に引き直した本を飛ばし、残りの本だけを引く(`Fetching 2 books` 前後。中断の瞬間によって 2 か 3)。
 - 3 回目: 引き直しを終えたので、再開の行は出ず、4 冊すべてを引き直す(`Fetching 4 books`)。
 
 同時実行:

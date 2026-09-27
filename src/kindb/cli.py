@@ -210,6 +210,15 @@ def _bib_status_rows(con) -> list[tuple[str, str]]:
     overrides = con.execute(
         "SELECT count(*) FROM bib_overrides o JOIN books b ON b.asin = o.asin"
     ).fetchone()[0]
+    pending = con.execute(
+        """SELECT p.mode, p.where_clause, p.started_at, (SELECT count(*) FROM bib_refetch_done)
+           FROM bib_refetch_pending p LIMIT 1"""
+    ).fetchone()
+    if pending:
+        # 中断した引き直し。同じ指定で実行し直すと続きから引く
+        mode, where_clause, started_at, done = pending
+        scope = f"--{mode.replace('_', '-')}" + (f" --where {where_clause!r}" if where_clause else "")
+        rows.append(("Bib refetch unfinished", f"{scope} since {started_at}, {done} books done"))
     if overrides:
         rows.append(("Bib overrides", str(overrides)))
     meta = con.execute("SELECT last_enrich_at, last_rematch_at FROM bib_metadata LIMIT 1").fetchone()
@@ -395,8 +404,12 @@ class _ConsoleReporter(Reporter):
     def waiting_for_lock(self) -> None:
         err_console.print("Database is in use by another process; waiting to write...")
 
-    def resuming(self, started_at: object) -> None:
-        console.print(f"Resuming the refetch started at {started_at}; skipping books refetched since then.")
+    def resuming(self, started_at: object, skipped: int) -> None:
+        console.print(f"Resuming the refetch started at {started_at}; skipping {skipped} books already refetched.")
+
+    def discarding(self, mode: str, where: str, started_at: object) -> None:
+        scope = f"--{mode.replace('_', '-')}" + (f" --where {where!r}" if where else "")
+        console.print(f"Discarding the unfinished refetch ({scope}, started at {started_at}); starting over.")
 
 
 @app.command()

@@ -341,8 +341,13 @@ def write_results(
     *,
     run_started_at: datetime | None = None,
     run_fetched: int | None = None,
+    record_refetch: bool = False,
 ) -> None:
-    """取得結果を 1 つのトランザクションで書く。import と同じく BEGIN → DELETE → INSERT → COMMIT → CHECKPOINT。"""
+    """取得結果を 1 つのトランザクションで書く。import と同じく BEGIN → DELETE → INSERT → COMMIT → CHECKPOINT。
+
+    record_refetch なら、引き直しの再開に使うよう、書き換えた本を bib_refetch_done に記録する。通信に失敗した本は
+    記録しないので、再開した回で引き直す。
+    """
     con.execute("BEGIN TRANSACTION")
     try:
         replaced = [r for r in results if r.status != STATUS_ERROR]
@@ -382,6 +387,8 @@ def write_results(
         for r in replaced:
             if r.match is not None:
                 _insert_match(con, r.asin, r.match, now)
+        if record_refetch and replaced:
+            con.executemany("INSERT OR IGNORE INTO bib_refetch_done (asin) VALUES (?)", [(r.asin,) for r in replaced])
         _ensure_metadata_row(con)
         con.execute(
             "UPDATE bib_metadata SET last_enrich_at = ?, last_enrich_fetched = ?",
@@ -422,14 +429,14 @@ def select_targets(
     where: str | None,
     retry_missing: bool,
     refresh: bool,
-    skip_fetched_since: datetime | None = None,
+    skip_asins: set[str] | None = None,
 ) -> list[Target]:
-    """skip_fetched_since は、中断した引き直しの開始日時。それ以降に取得した本は引き直し済みとして飛ばす。"""
+    """skip_asins は、中断した引き直しがすでに引き直した本。同じ指定で再開するときに飛ばす。"""
     condition = f"({where})" if where else "TRUE"
     try:
         rows = con.execute(
             f"""SELECT b.asin, b.title, b.authors_text, b.series_title, f.status,
-                       o.asin IS NOT NULL AS has_override, o.isbn, f.fetched_at
+                       o.asin IS NOT NULL AS has_override, o.isbn
                 FROM v_books b
                 LEFT JOIN bib_fetches f ON f.asin = b.asin
                 LEFT JOIN bib_overrides o ON o.asin = b.asin
@@ -440,11 +447,11 @@ def select_targets(
         raise ValueError(f"Invalid --where condition: {e}") from e
 
     targets = []
-    for asin, title, authors_text, series_title, status, has_override, isbn, fetched_at in rows:
+    for asin, title, authors_text, series_title, status, has_override, isbn in rows:
         # 訂正で ISBN を空にした本は、状態によらず取得しない
         if (has_override and isbn is None) or status == STATUS_EXCLUDED:
             continue
-        if skip_fetched_since is not None and fetched_at is not None and fetched_at >= skip_fetched_since:
+        if skip_asins and asin in skip_asins:
             continue
         if status in (None, STATUS_ERROR):
             pass
@@ -471,8 +478,11 @@ class EnrichSummary:
     aborted: str | None = None
     retry_after: float | None = None
     overrides: OverrideChanges | None = None
-    # 中断した引き直しを続けたときの、その引き直しの開始日時
+    # 中断した引き直しを続けたときの、その引き直しの開始日時と、飛ばした冊数
     resumed_from: datetime | None = None
+    resumed_skipped: int = 0
+    # 指定の違う引き直しを始めたため捨てた、中断中の引き直し(mode, where, 開始日時)
+    discarded_refetch: tuple[str, str, datetime] | None = None
 
 
 class Reporter:
@@ -484,7 +494,9 @@ class Reporter:
 
     def waiting_for_lock(self) -> None: ...
 
-    def resuming(self, started_at: datetime) -> None: ...
+    def resuming(self, started_at: datetime, skipped: int) -> None: ...
+
+    def discarding(self, mode: str, where: str, started_at: datetime) -> None: ...
 
 
 def run_enrich(db_path: Path, client: NdlClient, **options: object) -> EnrichSummary:
@@ -520,15 +532,18 @@ def _run_enrich_locked(
         )
 
     started_at = _now()
-    # 引き直し(--refresh / --retry-missing)は状態だけでは続きが分からないので、開始日時を残して再開に使う
+    # 引き直し(--refresh / --retry-missing)は状態だけでは続きが分からない。指定(モードと --where)ごとに、
+    # 引き直し終えた本を記録して再開に使う
     refetching = refresh or retry_missing
+    scope = ("refresh" if refresh else "retry_missing", where or "")
 
     # 0. スキーマを最新にし、訂正を置き換える(短い書き込みトランザクション)
     with closing(open_for_write(FINAL_LOCK_WAIT)) as con:
         create_schema(con)
         if where is not None:
+            # LIMIT 0 では条件を評価しないので、型の変換のように実行して初めて出るエラーを見逃す。全行で評価する
             try:
-                con.execute(f"SELECT asin FROM v_books WHERE ({where}) LIMIT 0")
+                con.execute(f"SELECT count(*) FROM v_books WHERE ({where})").fetchone()
             except duckdb.Error as e:
                 raise ValueError(f"Invalid --where condition: {e}") from e
         if overrides is not None:
@@ -539,28 +554,35 @@ def _run_enrich_locked(
             except Exception:
                 _rollback_quietly(con)
                 raise
-        if refetching:
-            pending = con.execute("SELECT min(started_at) FROM bib_pending_refresh").fetchone()[0]
-            if pending is None:
-                con.execute("INSERT INTO bib_pending_refresh VALUES (?)", [started_at])
-            summary.resumed_from = pending
         con.execute("CHECKPOINT")
 
-    # 1. 読み取り専用で対象を選ぶ
+    # 1. 読み取り専用で対象を選ぶ。同じ指定の中断した引き直しがあれば、引き直し済みの本を飛ばす
     with closing(connect(db_path, read_only=True)) as con:
-        targets = select_targets(
-            con,
-            where=where,
-            retry_missing=retry_missing,
-            refresh=refresh,
-            skip_fetched_since=summary.resumed_from,
-        )
+        pending = con.execute("SELECT mode, where_clause, started_at FROM bib_refetch_pending LIMIT 1").fetchone()
+        skip: set[str] = set()
+        if refetching and pending is not None and tuple(pending[:2]) == scope:
+            summary.resumed_from = pending[2]
+            skip = {row[0] for row in con.execute("SELECT asin FROM bib_refetch_done").fetchall()}
+        targets = select_targets(con, where=where, retry_missing=retry_missing, refresh=refresh, skip_asins=skip)
+    summary.resumed_skipped = len(skip)
+    if refetching and summary.resumed_from is None:
+        # 指定の違う中断した引き直しは捨てる。残すと、あとで同じ指定を実行したときに古い記録で本を飛ばす
+        if pending is not None:
+            summary.discarded_refetch = (pending[0], pending[1], pending[2])
+        with closing(open_for_write(FINAL_LOCK_WAIT)) as con:
+            con.execute("BEGIN TRANSACTION")
+            con.execute("DELETE FROM bib_refetch_pending")
+            con.execute("DELETE FROM bib_refetch_done")
+            con.execute("INSERT INTO bib_refetch_pending VALUES (?, ?, ?)", [*scope, started_at])
+            con.execute("COMMIT")
     truncated = bool(limit) and len(targets) > limit
     if limit:
         targets = targets[:limit]
     summary.targets = len(targets)
+    if summary.discarded_refetch is not None:
+        reporter.discarding(*summary.discarded_refetch)
     if summary.resumed_from is not None:
-        reporter.resuming(summary.resumed_from)
+        reporter.resuming(summary.resumed_from, summary.resumed_skipped)
     reporter.start(len(targets), client.interval)
 
     # 2〜4. DB を閉じたまま引き、一定冊数ごとにまとめて書く
@@ -580,7 +602,9 @@ def _run_enrich_locked(
                 raise
             return False  # 結果を持ったまま取得を続け、次の書き込みでまとめて書く
         with closing(con):
-            write_results(con, buffer, _now(), run_started_at=started_at, run_fetched=summary.fetched)
+            write_results(
+                con, buffer, _now(), run_started_at=started_at, run_fetched=summary.fetched, record_refetch=refetching
+            )
         buffer.clear()
         return True
 
@@ -608,9 +632,12 @@ def _run_enrich_locked(
         flush(FINAL_LOCK_WAIT)
 
     if refetching and not (summary.interrupted or summary.aborted or truncated):
-        # 対象をすべて引き直し終えたときだけ、再開の目印を消す。--limit で打ち切った回は、次の回が続きを引く
+        # 対象をすべて引き直し終えたときだけ、再開の記録を消す。--limit で打ち切った回は、次の回が続きを引く
         with closing(open_for_write(FINAL_LOCK_WAIT)) as con:
-            con.execute("DELETE FROM bib_pending_refresh")
+            con.execute("BEGIN TRANSACTION")
+            con.execute("DELETE FROM bib_refetch_pending")
+            con.execute("DELETE FROM bib_refetch_done")
+            con.execute("COMMIT")
             con.execute("CHECKPOINT")
     return summary
 

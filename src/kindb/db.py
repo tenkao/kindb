@@ -133,9 +133,18 @@ CREATE TABLE IF NOT EXISTS bib_overrides (
     isbn VARCHAR
 );
 
--- 中断した引き直し(--refresh / --retry-missing)の開始日時。次の引き直しは、この日時以降に取得した本を飛ばす
-CREATE TABLE IF NOT EXISTS bib_pending_refresh (
+-- 中断した引き直し(--refresh / --retry-missing)。同じ指定の次の実行は、bib_refetch_done の本を飛ばして続きを引く。
+-- 範囲を持たなかった前の形(bib_pending_refresh)は 0.4.0 の開発中にだけあったので消す
+DROP TABLE IF EXISTS bib_pending_refresh;
+
+CREATE TABLE IF NOT EXISTS bib_refetch_pending (
+    mode VARCHAR NOT NULL,
+    where_clause VARCHAR NOT NULL,
     started_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bib_refetch_done (
+    asin VARCHAR PRIMARY KEY
 );
 
 CREATE TABLE IF NOT EXISTS bib_metadata (
@@ -363,8 +372,11 @@ def wal_path(db_path: Path | str) -> Path:
 
 
 def enrich_lock_path(db_path: Path | str) -> Path:
-    """kindb enrich / rematch が同時に 1 つだけ動くようにするロックファイルのパス。"""
-    return Path(str(db_path) + ".enrich.lock")
+    """kindb enrich / rematch が同時に 1 つだけ動くようにするロックファイルのパス。
+
+    シンボリックリンクを解決してから決める。同じ DB を別名のパスで開いたときに、別のロックにならないようにするため。
+    """
+    return Path(str(Path(db_path).resolve()) + ".enrich.lock")
 
 
 class DatabaseLockedError(Exception):

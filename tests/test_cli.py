@@ -780,3 +780,26 @@ def test_status_reports_unmatched_books_overrides_and_last_runs(
         {"asin": "B000TEST02", "bib_status": "excluded", "bib_match": None},
         {"asin": "B000TEST03", "bib_status": "not_found", "bib_match": None},
     ]
+
+
+def test_status_shows_an_unfinished_refetch(imported_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ndl = _fake_ndl(monkeypatch)
+    runner.invoke(app, ["enrich", "--db", str(imported_db)])
+
+    def interrupt(count: int) -> None:
+        # 1 冊目(書名と著者、書名だけの 2 回)を終えたところで止める
+        if count == 3:
+            raise KeyboardInterrupt
+
+    ndl.calls.clear()
+    ndl.on_call = interrupt
+    retry = ["enrich", "--retry-missing", "--where", "asin <> 'B000TEST01'", "--db", str(imported_db)]
+    assert runner.invoke(app, retry).exit_code == 130
+    status = runner.invoke(app, ["status", "--db", str(imported_db)]).stdout
+    unfinished = r"Bib refetch unfinished\W+--retry-missing --where \"asin <> 'B000TEST01'\" since .*, 1 books"
+    assert re.search(unfinished, status)
+
+    ndl.on_call = None
+    result = runner.invoke(app, retry)
+    assert "Resuming the refetch started at" in result.stdout and "skipping 1 books already refetched" in result.stdout
+    assert "Bib refetch unfinished" not in runner.invoke(app, ["status", "--db", str(imported_db)]).stdout
