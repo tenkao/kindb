@@ -1,0 +1,128 @@
+<rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:openSearch="http://a9.com/-/spec/opensearchrss/1.0/" xmlns:dcndl="http://ndl.go.jp/dcndl/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" version="2.0">
+  <channel>
+    <title>9784822250850 booklet - 国立国会図書館サーチ OpenSearch</title>
+    <link>https://ios-v2-prod-eks-alb.ndlsearch.ndl.go.jp/api/opensearch?isbn=9784822250850&amp;cnt=500&amp;mediatype=booklet</link>
+    <description>Search results for isbn=9784822250850 cnt=500 mediatype=booklet</description>
+    <language>ja</language>
+    <openSearch:totalResults>2</openSearch:totalResults>
+    <openSearch:startIndex>1</openSearch:startIndex>
+    <openSearch:itemsPerPage>500</openSearch:itemsPerPage>
+    <item>
+      <title>HARD THINGS : 答えがない難問と困難にきみはどう立ち向かうか</title>
+      <link>https://ndlsearch.ndl.go.jp/books/R100000002-I026300125</link>
+      <description><![CDATA[<p>日経BP社,2015,978-4-8222-5085-0<p><ul><li>タイトル：HARD THINGS : 答えがない難問と困難にきみはどう立ち向かうか</li><li>タイトル（読み）：ハード シングス : コタエ ガ ナイ ナンモン ト コンナン ニ キミ ワ ドウ タチムカウカ</li><li>責任表示：ベン・ホロウィッツ 著,滑川海彦, 高橋信夫 訳</li><li>NDC(9)：336</li></ul>]]></description>
+      <author>Horowitz, Ben, 1966-,滑川, 海彦, 1952-,高橋, 信夫, 1953-,ベン・ホロウィッツ 著,滑川海彦, 高橋信夫 訳</author>
+      <category>図書</category>
+      <category>紙</category>
+      <guid isPermaLink="true">https://ndlsearch.ndl.go.jp/books/R100000002-I026300125</guid>
+      <pubDate>Wed, 26 Jul 2023 18:56:01 +0900</pubDate>
+      <dc:title>HARD THINGS : 答えがない難問と困難にきみはどう立ち向かうか</dc:title>
+      <dcndl:titleTranscription>ハード シングス : コタエ ガ ナイ ナンモン ト コンナン ニ キミ ワ ドウ タチムカウカ</dcndl:titleTranscription>
+      <dc:creator>Horowitz, Ben, 1966-</dc:creator>
+      <dc:creator>滑川, 海彦, 1952-</dc:creator>
+      <dc:creator>高橋, 信夫, 1953-</dc:creator>
+      <dcndl:creatorTranscription>ナメカワ, ウミヒコ, 1952-</dcndl:creatorTranscription>
+      <dcndl:creatorTranscription>タカハシ, ノブオ, 1953-</dcndl:creatorTranscription>
+      <dc:publisher>日経BP社</dc:publisher>
+      <dc:publisher>日経BPマーケティング (発売)</dc:publisher>
+      <dcndl:publicationPlace>JP</dcndl:publicationPlace>
+      <dc:date xsi:type="dcterms:W3CDTF">2015</dc:date>
+      <dcterms:issued>2015.4</dcterms:issued>
+      <dcndl:price>1800円</dcndl:price>
+      <dc:extent>389p</dc:extent>
+      <dc:identifier xsi:type="dcndl:ISBN">978-4-8222-5085-0</dc:identifier>
+      <dc:identifier xsi:type="dcndl:NDLBibID">026300125</dc:identifier>
+      <dc:identifier xsi:type="dcndl:JPNO">22563809</dc:identifier>
+      <dc:identifier xsi:type="dcndl:TOHANMARCNO">33255478</dc:identifier>
+      <dc:subject>経営管理</dc:subject>
+      <dc:subject xsi:type="dcndl:NDLC">DH211</dc:subject>
+      <dc:subject xsi:type="dcndl:NDC9">336</dc:subject>
+      <dc:description>原タイトル: THE HARD THING ABOUT HARD THINGS</dc:description>
+      <rdfs:seeAlso rdf:resource="https://www.library.pref.hokkaido.jp/wo/opc_srh/"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.city.sapporo.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1008000930119"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.pref.miyagi.jp/winj/opac/switch-detail-iccap.do?bibid=1101751770"/>
+      <rdfs:seeAlso rdf:resource="https://www.apl.pref.akita.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1009920284746"/>
+      <rdfs:seeAlso rdf:resource="https://opac.lib.pref.yamagata.jp/winj/opac/switch-detail-iccap.do?bibid=1103433818"/>
+      <rdfs:seeAlso rdf:resource="https://www.lib.pref.ibaraki.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1003000030561"/>
+      <rdfs:seeAlso rdf:resource="http://www.lib.pref.tochigi.lg.jp/winj/opac/switch-detail-iccap.do?bibid=1102032297"/>
+      <rdfs:seeAlso rdf:resource="https://www1.library.pref.gunma.jp/winj/opac/switch-detail-iccap.do?bibid=1110332944"/>
+      <rdfs:seeAlso rdf:resource="https://www.lib.pref.saitama.jp//winj/opac/switch-detail-iccap.do?bibid=1101633368"/>
+      <rdfs:seeAlso rdf:resource="https://www.lib.city.saitama.jp/bookdetail?num=532739&amp;ctg=1"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.city.chiba.jp/licsxp-opac/WOpacTifSchCmpdDispAction.do"/>
+      <rdfs:seeAlso rdf:resource="https://catalog.library.metro.tokyo.lg.jp/winj/opac/switch-detail-iccap.do?bibid=1152623446"/>
+      <rdfs:seeAlso rdf:resource="https://www.klnet.pref.kanagawa.jp/winj/opac/switch-detail-iccap.do?bibid=1105208196"/>
+      <rdfs:seeAlso rdf:resource="https://opac.lib.city.yokohama.lg.jp/winj/opac/switch-detail-iccap.do?bibid=1113262596"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.city.kawasaki.jp/bookdetail?num=2635285&amp;ctg=1"/>
+      <rdfs:seeAlso rdf:resource="https://www.lib.sagamihara.kanagawa.jp/TOSHOW/asp/WwShousaiKen.aspx?FCode=1871690"/>
+      <rdfs:seeAlso rdf:resource="https://opac.pref-lib.niigata.niigata.jp/winj/opac/switch-detail-iccap.do?bibid=1107833961"/>
+      <rdfs:seeAlso rdf:resource="https://lib2.lib.pref.toyama.jp/opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1000000487907"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.pref.ishikawa.lg.jp/wo/opc_srh/srh_detail/1000000846161/"/>
+      <rdfs:seeAlso rdf:resource="https://www.library-archives.pref.fukui.lg.jp/wo/opc_srh/srh_detail/1110100469/"/>
+      <rdfs:seeAlso rdf:resource="https://www.lib.pref.yamanashi.jp/licsxp-opac/WOpacMnuTopInitAction.do"/>
+      <rdfs:seeAlso rdf:resource="http://www.library.pref.gifu.lg.jp/winj/opac/switch-detail-iccap.do?bibid=1190019362"/>
+      <rdfs:seeAlso rdf:resource="https://www.toshokan.city.shizuoka.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1001103226538"/>
+      <rdfs:seeAlso rdf:resource="http://websv.aichi-pref-library.jp/winj/opac/switch-detail-iccap.do?bibid=1190118147"/>
+      <rdfs:seeAlso rdf:resource="https://www.shiga-pref-library.jp/wo/opc_srh/srh_detail/4335790/"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.pref.kyoto.jp/bib/?B10804667"/>
+      <rdfs:seeAlso rdf:resource="https://www.oml.city.osaka.lg.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1000013493514"/>
+      <rdfs:seeAlso rdf:resource="https://www.lib-sakai.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1007000521989"/>
+      <rdfs:seeAlso rdf:resource="https://opacsvr01.library.pref.nara.jp/opac/volume/1130723"/>
+      <rdfs:seeAlso rdf:resource="http://www.lib.wakayama-c.ed.jp/winj/opac/switch-detail-iccap.do?bibid=1102753119"/>
+      <rdfs:seeAlso rdf:resource="http://www.library.pref.tottori.jp/winj/opac/switch-detail-iccap.do?bibid=1102092913"/>
+      <rdfs:seeAlso rdf:resource="https://www2.library.pref.shimane.lg.jp/opac/switch-detail-iccap.do?bibid=1110733647"/>
+      <rdfs:seeAlso rdf:resource="https://opac.libnet.pref.okayama.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1009811897198"/>
+      <rdfs:seeAlso rdf:resource="http://www.library.city.hiroshima.jp/winj/opac/switch-detail-iccap.do?bibid=1103710119"/>
+      <rdfs:seeAlso rdf:resource="https://library.pref.yamaguchi.lg.jp//wo/opc_srh/srh_detail/1001276174/"/>
+      <rdfs:seeAlso rdf:resource="https://alislibopac.bunmori.tokushima.jp/winj/opac/switch-detail-iccap.do?bibid=1103839777"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.pref.kagawa.lg.jp/winj/opac/switch-detail-iccap.do?bibid=1110285595"/>
+      <rdfs:seeAlso rdf:resource="https://www.ehimetosyokan.jp/winj/opac/switch-detail-iccap.do?bibid=1120008075"/>
+      <rdfs:seeAlso rdf:resource="https://opac.library.kochi.jp/winj/opac/switch-detail-iccap.do?bibid=1109763419"/>
+      <rdfs:seeAlso rdf:resource="https://www2.tosyo-saga.jp/kentosyo2/opac/switch-detail-iccap.do?bibid=1101828142"/>
+      <rdfs:seeAlso rdf:resource="https://opac.miraionlibrary.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1000002356467"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.pref.kumamoto.jp/winj/opac/switch-detail-iccap.do?bibid=1102356067"/>
+      <rdfs:seeAlso rdf:resource="https://library.pref.oita.jp/winj/opac/switch-detail-iccap.do?bibid=1102482695"/>
+      <rdfs:seeAlso rdf:resource="https://www.lib.pref.miyazaki.lg.jp/winj/opac/switch-detail-iccap.do?bibid=1101980091"/>
+      <rdfs:seeAlso rdf:resource="https://www2.library.pref.kagoshima.jp/kento/opac/switch-detail-iccap.do?bibid=1111450594"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.pref.okinawa.jp/winj/opac/switch-detail-iccap.do?bibid=1101228103"/>
+      <rdfs:seeAlso rdf:resource="https://ndlsearch.ndl.go.jp/books/R100000002-I026300125"/>
+      <rdfs:seeAlso rdf:resource="https://library.sapie.or.jp/cgi-bin/CN1MN1?S00101=J00DTL04&amp;S00222=3488806"/>
+      <rdfs:seeAlso rdf:resource="https://library-documents.jaea.go.jp/opac/opac_details/?lang=0&amp;amode=11&amp;bibid=1000163654"/>
+      <rdfs:seeAlso rdf:resource="https://www.books.or.jp/book-details/9784822250850"/>
+      <dc:description> 2015</dc:description>
+    </item>
+    <item>
+      <title>Hard things (ハード・シングス) : 答えがない難問と困難にきみはどう立ち向かうか</title>
+      <link>https://ndlsearch.ndl.go.jp/books/R100000136-I1970304959817375118</link>
+      <description><![CDATA[<p>日経BP社,2015,9784822250850<p><ul><li>タイトル：Hard things (ハード・シングス) : 答えがない難問と困難にきみはどう立ち向かうか</li><li>タイトル（読み）：ハード・シングス : コタエ ガ ナイ ナンモン ト コンナン ニ キミ ワ ドウ タチムカウカ</li><li>責任表示：ベン・ホロウィッツ著 ; 滑川海彦, 高橋信夫訳</li><li>NDC(9)：335.13</li></ul>]]></description>
+      <author>Horowitz, Ben,滑川, 海彦,高橋, 信夫,小澤, 隆生,ベン・ホロウィッツ著 ; 滑川海彦, 高橋信夫訳</author>
+      <category>図書</category>
+      <category>紙</category>
+      <guid isPermaLink="true">https://ndlsearch.ndl.go.jp/books/R100000136-I1970304959817375118</guid>
+      <pubDate>Fri, 25 Sep 2026 11:13:32 +0900</pubDate>
+      <dc:title>Hard things (ハード・シングス) : 答えがない難問と困難にきみはどう立ち向かうか</dc:title>
+      <dcndl:titleTranscription>ハード・シングス : コタエ ガ ナイ ナンモン ト コンナン ニ キミ ワ ドウ タチムカウカ</dcndl:titleTranscription>
+      <dc:creator>Horowitz, Ben</dc:creator>
+      <dc:creator>滑川, 海彦</dc:creator>
+      <dc:creator>高橋, 信夫</dc:creator>
+      <dc:creator>小澤, 隆生</dc:creator>
+      <dcndl:creatorTranscription>ナメカワ, ウミヒコ</dcndl:creatorTranscription>
+      <dcndl:creatorTranscription>タカハシ, ノブオ</dcndl:creatorTranscription>
+      <dcndl:creatorTranscription>オザワ, タカオ</dcndl:creatorTranscription>
+      <dc:publisher>日経BP社</dc:publisher>
+      <dc:publisher>日経BPマーケティング (発売)</dc:publisher>
+      <dcndl:publicationPlace>JP</dcndl:publicationPlace>
+      <dc:date xsi:type="dcterms:W3CDTF">2015</dc:date>
+      <dcterms:issued>2015.4</dcterms:issued>
+      <dc:identifier xsi:type="dcndl:ISBN">9784822250850</dc:identifier>
+      <dc:identifier xsi:type="dcndl:ISBN13">9784822250850</dc:identifier>
+      <dc:identifier xsi:type="dcndl:NIIBibID">BB18563467</dc:identifier>
+      <dc:subject>Horowitz, Ben, 1966-</dc:subject>
+      <dc:subject xsi:type="dcndl:NDC9">335.13</dc:subject>
+      <dc:subject xsi:type="dcndl:NDC8">335.13</dc:subject>
+      <dc:description>日本語版序文: 小澤隆生</dc:description>
+      <dc:description>原著 (c2014) の翻訳</dc:description>
+      <rdfs:seeAlso rdf:resource="https://cir.nii.ac.jp/crid/1970304959817375118"/>
+      <dc:description> 2015</dc:description>
+    </item>
+  </channel>
+</rss>

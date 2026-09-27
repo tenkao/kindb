@@ -1,0 +1,238 @@
+<rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:openSearch="http://a9.com/-/spec/opensearchrss/1.0/" xmlns:dcndl="http://ndl.go.jp/dcndl/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" version="2.0">
+  <channel>
+    <title>星界の紋章 2 booklet - 国立国会図書館サーチ OpenSearch</title>
+    <link>https://ios-v2-prod-eks-alb.ndlsearch.ndl.go.jp/api/opensearch?title=%E6%98%9F%E7%95%8C%E3%81%AE%E7%B4%8B%E7%AB%A0+2&amp;cnt=500&amp;mediatype=booklet</link>
+    <description>Search results for title=星界の紋章 2 cnt=500 mediatype=booklet</description>
+    <language>ja</language>
+    <openSearch:totalResults>6</openSearch:totalResults>
+    <openSearch:startIndex>1</openSearch:startIndex>
+    <openSearch:itemsPerPage>500</openSearch:itemsPerPage>
+    <item>
+      <title>星界の断章オーディオドラマCDブック with星界の紋章&amp;星界の戦旗</title>
+      <link>https://ndlsearch.ndl.go.jp/books/R100000002-I000011152152</link>
+      <description><![CDATA[<p>エムディエヌコーポレーション,2011,978-4-8443-6190-9<p><ul><li>タイトル：星界の断章オーディオドラマCDブック with星界の紋章&星界の戦旗</li><li>タイトル（読み）：セイカイ ノ ダンショウ オーディオ ドラマ CD ブック</li><li>シリーズ名：星界シリーズ</li></ul>]]></description>
+      <author/>
+      <category>録音資料</category>
+      <category>記録メディア</category>
+      <guid isPermaLink="true">https://ndlsearch.ndl.go.jp/books/R100000002-I000011152152</guid>
+      <pubDate>Sat, 9 Apr 2011 00:17:38 +0900</pubDate>
+      <dc:title>星界の断章オーディオドラマCDブック with星界の紋章&amp;星界の戦旗</dc:title>
+      <dcndl:titleTranscription>セイカイ ノ ダンショウ オーディオ ドラマ CD ブック</dcndl:titleTranscription>
+      <dcndl:seriesTitle>星界シリーズ</dcndl:seriesTitle>
+      <dc:publisher>エムディエヌコーポレーション</dc:publisher>
+      <dc:publisher>インプレスコミュニケーションズ (発売)</dc:publisher>
+      <dcndl:publicationPlace>JP</dcndl:publicationPlace>
+      <dc:date xsi:type="dcterms:W3CDTF">2011</dc:date>
+      <dcterms:issued>[2011.3]</dcterms:issued>
+      <dcndl:price>2600円</dcndl:price>
+      <dc:extent>録音ディスク 2枚</dc:extent>
+      <dc:identifier xsi:type="dcndl:ISBN">978-4-8443-6190-9</dc:identifier>
+      <dc:identifier xsi:type="dcndl:RIS502">MDCD-01111</dc:identifier>
+      <dc:identifier xsi:type="dcndl:NDLBibID">000011152152</dc:identifier>
+      <dc:identifier xsi:type="dcndl:JPNO">21906874</dc:identifier>
+      <dc:subject xsi:type="dcndl:NDLC">YMC11</dc:subject>
+      <rdfs:seeAlso rdf:resource="https://ndlsearch.ndl.go.jp/books/R100000002-I000011152152"/>
+      <rdfs:seeAlso rdf:resource="https://www.books.or.jp/book-details/9784844361909"/>
+      <dc:description> 2011</dc:description>
+    </item>
+    <item>
+      <title>星界の紋章フィルムブック</title>
+      <link>https://ndlsearch.ndl.go.jp/books/R100000002-I000003000750</link>
+      <description><![CDATA[<p>2,早川書房,2001,4-15-030666-4<p><ul><li>タイトル：星界の紋章フィルムブック</li><li>タイトル（読み）：セイカイ ノ モンショウ フィルム ブック</li><li>責任表示：早川書房編集部 編</li><li>シリーズ名：ハヤカワ文庫 : JA</li><li>シリーズ名（読み）：ハヤカワ ブンコ</li><li>NDC(9)：778.77</li></ul>]]></description>
+      <author>早川書房,早川書房編集部 編</author>
+      <category>図書</category>
+      <category>紙</category>
+      <guid isPermaLink="true">https://ndlsearch.ndl.go.jp/books/R100000002-I000003000750</guid>
+      <pubDate>Tue, 14 Aug 2001 00:03:00 +0900</pubDate>
+      <dc:title>星界の紋章フィルムブック</dc:title>
+      <dcndl:titleTranscription>セイカイ ノ モンショウ フィルム ブック</dcndl:titleTranscription>
+      <dc:creator>早川書房</dc:creator>
+      <dcndl:creatorTranscription>ハヤカワ ショボウ</dcndl:creatorTranscription>
+      <dcndl:volume>2</dcndl:volume>
+      <dcndl:seriesTitle>ハヤカワ文庫 : JA</dcndl:seriesTitle>
+      <dcndl:seriesTitleTranscription>ハヤカワ ブンコ</dcndl:seriesTitleTranscription>
+      <dc:publisher>早川書房</dc:publisher>
+      <dcndl:publicationPlace>JP</dcndl:publicationPlace>
+      <dc:date xsi:type="dcterms:W3CDTF">2001</dc:date>
+      <dcterms:issued>2001.6</dcterms:issued>
+      <dcndl:price>620円</dcndl:price>
+      <dc:extent>175p</dc:extent>
+      <dc:identifier xsi:type="dcndl:ISBN">4-15-030666-4</dc:identifier>
+      <dc:identifier xsi:type="dcndl:ISBN13">4-15-030666-4</dc:identifier>
+      <dc:identifier xsi:type="dcndl:NDLBibID">000003000750</dc:identifier>
+      <dc:identifier xsi:type="dcndl:JPNO">20165679</dc:identifier>
+      <dc:subject xsi:type="dcndl:NDC9">778.77</dc:subject>
+      <rdfs:seeAlso rdf:resource="https://www.library.pref.miyagi.jp/winj/opac/switch-detail-iccap.do?bibid=1108335952"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.city.chiba.jp/licsxp-opac/WOpacTifSchCmpdDispAction.do"/>
+      <rdfs:seeAlso rdf:resource="https://www.lib.sagamihara.kanagawa.jp/TOSHOW/asp/WwShousaiKen.aspx?FCode=885381"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.city.nagoya.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1009911019017"/>
+      <rdfs:seeAlso rdf:resource="https://www.shiga-pref-library.jp/wo/opc_srh/srh_detail/1472459/"/>
+      <rdfs:seeAlso rdf:resource="https://www.oml.city.osaka.lg.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1000010094745"/>
+      <rdfs:seeAlso rdf:resource="https://www.lib-sakai.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1000001391969"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.pref.kagawa.lg.jp/winj/opac/switch-detail-iccap.do?bibid=1108310141"/>
+      <rdfs:seeAlso rdf:resource="https://ndlsearch.ndl.go.jp/books/R100000002-I000003000750"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.pref.osaka.jp/bibj/?B16204593"/>
+      <rdfs:seeAlso rdf:resource="https://www.books.or.jp/book-details/9784150306663"/>
+      <dc:description> 2001</dc:description>
+    </item>
+    <item>
+      <title>星界の紋章</title>
+      <link>https://ndlsearch.ndl.go.jp/books/R100000002-I000002498252</link>
+      <description><![CDATA[<p>2 (ささやかな戦い),早川書房,1996,4-15-030552-8<p><ul><li>タイトル：星界の紋章</li><li>タイトル（読み）：セイカイ ノ モンショウ</li><li>責任表示：森岡浩之 著</li><li>シリーズ名：ハヤカワ文庫. JA</li></ul>]]></description>
+      <author>森岡, 浩之, 1962-,森岡浩之 著</author>
+      <category>図書</category>
+      <category>紙</category>
+      <guid isPermaLink="true">https://ndlsearch.ndl.go.jp/books/R100000002-I000002498252</guid>
+      <pubDate>Tue, 24 Sep 1996 09:00:00 +0900</pubDate>
+      <dc:title>星界の紋章</dc:title>
+      <dcndl:titleTranscription>セイカイ ノ モンショウ</dcndl:titleTranscription>
+      <dc:creator>森岡, 浩之, 1962-</dc:creator>
+      <dcndl:creatorTranscription>モリオカ, ヒロユキ, 1962-</dcndl:creatorTranscription>
+      <dcndl:volume>2 (ささやかな戦い)</dcndl:volume>
+      <dcndl:seriesTitle>ハヤカワ文庫. JA</dcndl:seriesTitle>
+      <dc:publisher>早川書房</dc:publisher>
+      <dcndl:publicationPlace>JP</dcndl:publicationPlace>
+      <dc:date xsi:type="dcterms:W3CDTF">1996</dc:date>
+      <dcterms:issued>1996.5</dcterms:issued>
+      <dcndl:price>520円 (税込)</dcndl:price>
+      <dc:extent>287p</dc:extent>
+      <dc:identifier xsi:type="dcndl:ISBN">4-15-030552-8</dc:identifier>
+      <dc:identifier xsi:type="dcndl:ISBN13">4-15-030552-8</dc:identifier>
+      <dc:identifier xsi:type="dcndl:NDLBibID">000002498252</dc:identifier>
+      <dc:identifier xsi:type="dcndl:JPNO">96060620</dc:identifier>
+      <dc:subject xsi:type="dcndl:NDLC">KH377</dc:subject>
+      <dc:subject xsi:type="dcndl:NDC8">913.6</dc:subject>
+      <rdfs:seeAlso rdf:resource="https://www.library.pref.hokkaido.jp/wo/opc_srh/"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.city.sapporo.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1001000941422"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.pref.miyagi.jp/winj/opac/switch-detail-iccap.do?bibid=1104317529"/>
+      <rdfs:seeAlso rdf:resource="https://www.lib.pref.saitama.jp//winj/opac/switch-detail-iccap.do?bibid=1123466343"/>
+      <rdfs:seeAlso rdf:resource="https://www.lib.city.saitama.jp/bookdetail?num=767576&amp;ctg=1"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.city.chiba.jp/licsxp-opac/WOpacTifSchCmpdDispAction.do"/>
+      <rdfs:seeAlso rdf:resource="https://catalog.library.metro.tokyo.lg.jp/winj/opac/switch-detail-iccap.do?bibid=1102289058"/>
+      <rdfs:seeAlso rdf:resource="https://opac.lib.city.yokohama.lg.jp/winj/opac/switch-detail-iccap.do?bibid=1196027825"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.city.kawasaki.jp/bookdetail?num=1243874&amp;ctg=1"/>
+      <rdfs:seeAlso rdf:resource="https://www.lib.sagamihara.kanagawa.jp/TOSHOW/asp/WwShousaiKen.aspx?FCode=313020"/>
+      <rdfs:seeAlso rdf:resource="https://www.library-archives.pref.fukui.lg.jp/wo/opc_srh/srh_detail/1103477815/"/>
+      <rdfs:seeAlso rdf:resource="https://www.toshokan.city.shizuoka.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1001101827037"/>
+      <rdfs:seeAlso rdf:resource="https://www.shiga-pref-library.jp/wo/opc_srh/srh_detail/1014581/"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.pref.kyoto.jp/bib/?B10138860"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.pref.osaka.jp/bib/?B11110114"/>
+      <rdfs:seeAlso rdf:resource="https://www.oml.city.osaka.lg.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1000000537484"/>
+      <rdfs:seeAlso rdf:resource="https://www.lib-sakai.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1000000355825"/>
+      <rdfs:seeAlso rdf:resource="http://www.library.city.hiroshima.jp/winj/opac/switch-detail-iccap.do?bibid=1100020987"/>
+      <rdfs:seeAlso rdf:resource="https://alislibopac.bunmori.tokushima.jp/winj/opac/switch-detail-iccap.do?bibid=1100418401"/>
+      <rdfs:seeAlso rdf:resource="https://www.library.pref.kagawa.lg.jp/winj/opac/switch-detail-iccap.do?bibid=1106025279"/>
+      <rdfs:seeAlso rdf:resource="https://www.toshokan.city.fukuoka.lg.jp/winj/opac/switch-detail-iccap.do?bibid=1104058308"/>
+      <rdfs:seeAlso rdf:resource="https://opac.miraionlibrary.jp/licsxp-opac/WOpacMsgNewListToTifTilDetailAction.do?tilcod=1009610042053"/>
+      <rdfs:seeAlso rdf:resource="https://library.pref.oita.jp/winj/opac/switch-detail-iccap.do?bibid=1106035052"/>
+      <rdfs:seeAlso rdf:resource="https://ndlsearch.ndl.go.jp/books/R100000002-I000002498252"/>
+      <rdfs:seeAlso rdf:resource="https://library.sapie.or.jp/cgi-bin/CN1MN1?S00101=J00DTL04&amp;S00222=939833"/>
+      <rdfs:seeAlso rdf:resource="https://dl.ndl.go.jp/pid/14167259"/>
+      <rdfs:seeAlso rdf:resource="https://www.books.or.jp/book-details/9784150305529"/>
+      <dc:description> 1996</dc:description>
+    </item>
+    <item>
+      <title>星界の紋章</title>
+      <link>https://ndlsearch.ndl.go.jp/books/R100000002-I025412419</link>
+      <description><![CDATA[<p>2,フレックスコミックス,2014,978-4-593-85778-4<p><ul><li>タイトル：星界の紋章</li><li>タイトル（読み）：セイカイ ノ モンショウ</li><li>責任表示：森岡浩之 原作,米村孝一郎 漫画</li><li>シリーズ名：METEOR COMICS</li><li>NDC(9)：726.1</li></ul>]]></description>
+      <author>森岡, 浩之, 1962-,米村, 孝一郎, 1966-,森岡浩之 原作,米村孝一郎 漫画</author>
+      <category>図書</category>
+      <category>紙</category>
+      <guid isPermaLink="true">https://ndlsearch.ndl.go.jp/books/R100000002-I025412419</guid>
+      <pubDate>Mon, 6 Dec 2021 20:44:16 +0900</pubDate>
+      <dc:title>星界の紋章</dc:title>
+      <dcndl:titleTranscription>セイカイ ノ モンショウ</dcndl:titleTranscription>
+      <dc:creator>森岡, 浩之, 1962-</dc:creator>
+      <dc:creator>米村, 孝一郎, 1966-</dc:creator>
+      <dcndl:creatorTranscription>モリオカ, ヒロユキ, 1962-</dcndl:creatorTranscription>
+      <dcndl:creatorTranscription>ヨネムラ, コウイチロウ, 1966-</dcndl:creatorTranscription>
+      <dcndl:volume>2</dcndl:volume>
+      <dcndl:seriesTitle>METEOR COMICS</dcndl:seriesTitle>
+      <dc:publisher>フレックスコミックス</dc:publisher>
+      <dc:publisher>ほるぷ出版 (発売)</dc:publisher>
+      <dcndl:publicationPlace>JP</dcndl:publicationPlace>
+      <dc:date xsi:type="dcterms:W3CDTF">2014</dc:date>
+      <dcterms:issued>2014.4</dcterms:issued>
+      <dcndl:price>570円</dcndl:price>
+      <dc:extent>1冊</dc:extent>
+      <dc:identifier xsi:type="dcndl:ISBN">978-4-593-85778-4</dc:identifier>
+      <dc:identifier xsi:type="dcndl:NDLBibID">025412419</dc:identifier>
+      <dc:identifier xsi:type="dcndl:JPNO">22398349</dc:identifier>
+      <dc:identifier xsi:type="dcndl:TOHANMARCNO">33091588</dc:identifier>
+      <dcndl:genre>漫画</dcndl:genre>
+      <dcndl:genreTranscription>マンガ</dcndl:genreTranscription>
+      <dc:subject xsi:type="dcndl:NDLC">Y84</dc:subject>
+      <dc:subject xsi:type="dcndl:NDC9">726.1</dc:subject>
+      <rdfs:seeAlso rdf:resource="https://ndlsearch.ndl.go.jp/books/R100000002-I025412419"/>
+      <rdfs:seeAlso rdf:resource="https://www.books.or.jp/book-details/9784593857784"/>
+      <dc:description> 2014</dc:description>
+    </item>
+    <item>
+      <title>Crest of the stars</title>
+      <link>https://ndlsearch.ndl.go.jp/books/R100000002-I031968551</link>
+      <description><![CDATA[<p>J-Novel Club,2020,9781718350700<p><ul><li>タイトル：Crest of the stars</li><li>責任表示：author, Hiroyuki Morioka,illustrator, Takami Akai</li></ul>]]></description>
+      <author>森岡, 浩之, 1962-,author, Hiroyuki Morioka,illustrator, Takami Akai</author>
+      <category>図書</category>
+      <category>紙</category>
+      <guid isPermaLink="true">https://ndlsearch.ndl.go.jp/books/R100000002-I031968551</guid>
+      <pubDate>Fri, 11 Jul 2025 00:27:41 +0900</pubDate>
+      <dc:title>Crest of the stars</dc:title>
+      <dc:creator>森岡, 浩之, 1962-</dc:creator>
+      <dcndl:creatorTranscription>モリオカ, ヒロユキ, 1962-</dcndl:creatorTranscription>
+      <dcndl:edition>Collector's edition</dcndl:edition>
+      <dc:publisher>J-Novel Club</dc:publisher>
+      <dcndl:publicationPlace>US</dcndl:publicationPlace>
+      <dc:date xsi:type="dcterms:W3CDTF">2020</dc:date>
+      <dcterms:issued>[2020]</dcterms:issued>
+      <dc:extent>627 pages</dc:extent>
+      <dc:identifier xsi:type="dcndl:ISBN">9781718350700</dc:identifier>
+      <dc:identifier xsi:type="dcndl:ISBN13">9781718350700</dc:identifier>
+      <dc:identifier xsi:type="dcndl:NDLBibID">031968551</dc:identifier>
+      <dc:identifier xsi:type="dcndl:USMARCNO">2022285443</dc:identifier>
+      <dc:identifier xsi:type="dcndl:OCLCNO">1228909563</dc:identifier>
+      <dc:subject>Space colonies--Fiction</dc:subject>
+      <dcndl:genre>Fiction</dcndl:genre>
+      <dc:subject xsi:type="dcndl:NDLC">KH971</dc:subject>
+      <dc:subject xsi:type="dcterms:LCC">PL873.O77</dc:subject>
+      <dc:subject xsi:type="dcterms:DDC">895.63/6</dc:subject>
+      <dc:description>出版</dc:description>
+      <dc:description>Originally published in Japan in 1996 by Hayakawa Publishing Corporation</dc:description>
+      <dc:description>Translated from Japanese</dc:description>
+      <dc:description>"Contains all 3 original volumes in one complete collection!"--Back cover</dc:description>
+      <rdfs:seeAlso rdf:resource="https://ndlsearch.ndl.go.jp/books/R100000002-I031968551"/>
+      <dc:description> 2020</dc:description>
+    </item>
+    <item>
+      <title>Seikai : crest of the stars</title>
+      <link>https://ndlsearch.ndl.go.jp/books/R100000002-I028459043</link>
+      <description><![CDATA[<p>Tokyopop Inc.,2006,9781598165753<p><ul><li>タイトル：Seikai : crest of the stars</li><li>責任表示：Hiroyuki Morioka,translation, Sue Shambaugh,English adaptation, Benjamin Arntz.</li></ul>]]></description>
+      <author>森岡, 浩之, 1962-,Hiroyuki Morioka,translation, Sue Shambaugh,English adaptation, Benjamin Arntz.</author>
+      <category>図書</category>
+      <category>紙</category>
+      <guid isPermaLink="true">https://ndlsearch.ndl.go.jp/books/R100000002-I028459043</guid>
+      <pubDate>Fri, 27 Apr 2018 01:03:39 +0900</pubDate>
+      <dc:title>Seikai : crest of the stars</dc:title>
+      <dc:creator>森岡, 浩之, 1962-</dc:creator>
+      <dcndl:creatorTranscription>モリオカ, ヒロユキ, 1962-</dcndl:creatorTranscription>
+      <dc:publisher>Tokyopop Inc.</dc:publisher>
+      <dcndl:publicationPlace>US</dcndl:publicationPlace>
+      <dc:date xsi:type="dcterms:W3CDTF">2006</dc:date>
+      <dcterms:issued>[2006]-</dcterms:issued>
+      <dc:extent>volumes</dc:extent>
+      <dc:identifier xsi:type="dcndl:ISBN">9781598165753</dc:identifier>
+      <dc:identifier xsi:type="dcndl:ISBN13">9781598165753</dc:identifier>
+      <dc:identifier xsi:type="dcndl:NDLBibID">028459043</dc:identifier>
+      <dc:identifier xsi:type="dcndl:USMARCNO">2006287361</dc:identifier>
+      <dc:identifier xsi:type="dcndl:OCLCNO">465669921</dc:identifier>
+      <dc:subject>Space warfare--Fiction.</dc:subject>
+      <dcndl:genre>Fiction.</dcndl:genre>
+      <dc:subject xsi:type="dcndl:NDLC">KH877</dc:subject>
+      <dc:subject xsi:type="dcterms:LCC">PL873.O77</dc:subject>
+      <dc:subject xsi:type="dcterms:DDC">895.6/3</dc:subject>
+      <dc:description>Translated from the Japanese.</dc:description>
+      <dc:description>"First published in Japan by Hayakawa Publishing Corporation"--Title page verso.</dc:description>
+      <rdfs:seeAlso rdf:resource="https://ndlsearch.ndl.go.jp/books/R100000002-I028459043"/>
+      <dc:description> 2006</dc:description>
+    </item>
+  </channel>
+</rss>

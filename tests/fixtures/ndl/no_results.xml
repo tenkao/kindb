@@ -1,0 +1,11 @@
+<rss xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:openSearch="http://a9.com/-/spec/opensearchrss/1.0/" xmlns:dcndl="http://ndl.go.jp/dcndl/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" version="2.0">
+  <channel>
+    <title>Fight 3 島本和彦 - 国立国会図書館サーチ OpenSearch</title>
+    <link>https://ios-v2-prod-eks-alb.ndlsearch.ndl.go.jp/api/opensearch?title=Fight+3&amp;creator=%E5%B3%B6%E6%9C%AC%E5%92%8C%E5%BD%A6&amp;cnt=200</link>
+    <description>Search results for title=Fight 3 creator=島本和彦 cnt=200</description>
+    <language>ja</language>
+    <openSearch:totalResults>0</openSearch:totalResults>
+    <openSearch:startIndex>1</openSearch:startIndex>
+    <openSearch:itemsPerPage>200</openSearch:itemsPerPage>
+  </channel>
+</rss>
