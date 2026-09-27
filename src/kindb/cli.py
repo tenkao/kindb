@@ -14,7 +14,9 @@ from rich.text import Text
 
 from kindb import sqlguard
 from kindb.db import DatabaseLockedError, connect, ensure_schema, get_db_path, wal_path
+from kindb.enrich import FetchResult, Reporter, Target, run_enrich, run_rematch
 from kindb.importer import import_kindle_json, import_official_zip
+from kindb.ndl import DEFAULT_INTERVAL, NdlClient
 
 app = typer.Typer(help="Kindle library manager powered by DuckDB.")
 # 書名やパスなどのデータを rich のマークアップや絵文字の記法として解釈させない。解釈すると [Paperback] は黙って消え、
@@ -170,10 +172,47 @@ def status(db: Optional[str] = _db_option()) -> None:
             table.add_row("Author IDs (rows)", str(official_meta[4]))
             table.add_row("Author names (rows)", str(official_meta[5]))
             table.add_row("Official ASIN (uniq)", str(official_meta[6]))
+        for label, value in _bib_status_rows(con):
+            table.add_row(label, value)
         table.add_row("Database", str(db_path))
         console.print(table)
     finally:
         con.close()
+
+
+def _bib_status_rows(con) -> list[tuple[str, str]]:
+    # 蔵書から消えた本の書誌情報はテーブルに残るので、現役の本だけを数える
+    rows: list[tuple[str, str]] = []
+    not_fetched = con.execute(
+        "SELECT count(*) FROM books b WHERE NOT EXISTS (SELECT 1 FROM bib_fetches f WHERE f.asin = b.asin)"
+    ).fetchone()[0]
+    rows.append(("Bib not fetched", str(not_fetched)))
+    for bib_status, count in con.execute(
+        """SELECT f.status, count(*) FROM bib_fetches f JOIN books b ON b.asin = f.asin
+           GROUP BY f.status ORDER BY f.status"""
+    ).fetchall():
+        rows.append((f"Bib status: {bib_status}", str(count)))
+    for method, count in con.execute(
+        """SELECT m.method, count(*) FROM bib_matches m JOIN books b ON b.asin = m.asin
+           GROUP BY m.method ORDER BY m.method"""
+    ).fetchall():
+        rows.append((f"Bib match: {method}", str(count)))
+    unmatched = con.execute(
+        """SELECT count(*) FROM bib_fetches f JOIN books b ON b.asin = f.asin
+           WHERE f.status = 'found' AND NOT EXISTS (SELECT 1 FROM bib_matches m WHERE m.asin = f.asin)"""
+    ).fetchone()[0]
+    if unmatched:
+        # rematch で採用できる候補がなくなった本。引き直せば、直した規則で検索の段からやり直せる
+        rows.append(("Bib found, unmatched", f"{unmatched} (rerun enrich --refresh)"))
+    overrides = con.execute("SELECT count(*) FROM bib_overrides").fetchone()[0]
+    if overrides:
+        rows.append(("Bib overrides", str(overrides)))
+    meta = con.execute("SELECT last_enrich_at, last_rematch_at FROM bib_metadata LIMIT 1").fetchone()
+    if meta and meta[0]:
+        rows.append(("Last enrich", str(meta[0])))
+    if meta and meta[1]:
+        rows.append(("Last rematch", str(meta[1])))
+    return rows
 
 
 @app.command()
@@ -183,18 +222,21 @@ def search(
     limit: int = _list_limit_option(),
     db: Optional[str] = _db_option(),
 ) -> None:
-    """Search books by title, authors, ASIN, or read status."""
+    """Search books by title, authors, ASIN, read status, or NDL subject."""
     db_path = _require_db(db)
 
     con = connect(db_path, read_only=True)
     try:
         like = f"%{_escape_like(term)}%"
-        params: list = [like, like, like, like]
+        params: list = [like, like, like, like, like]
+        # 件名は表に出さない。列を足すと 80 桁の表で書名がさらに細く折り返されるため
         where = r"""FROM v_books
                WHERE title ILIKE ? ESCAPE '\'
                   OR authors_text ILIKE ? ESCAPE '\'
                   OR asin ILIKE ? ESCAPE '\'
-                  OR read_status ILIKE ? ESCAPE '\'"""
+                  OR read_status ILIKE ? ESCAPE '\'
+                  OR EXISTS (SELECT 1 FROM bib_subjects bs
+                             WHERE bs.asin = v_books.asin AND bs.subject ILIKE ? ESCAPE '\')"""
         total = con.execute(f"SELECT count(*) {where}", params).fetchone()[0]
         if total == 0:
             console.print("No results found.")
@@ -322,6 +364,102 @@ def recent(
             ("Acquired", {}),
         ],
         params=[limit],
+    )
+
+
+def _ndl_client(interval: float) -> NdlClient:
+    return NdlClient(interval=interval)
+
+
+class _ConsoleReporter(Reporter):
+    def start(self, targets: int, interval: float) -> None:
+        console.print(
+            f"Fetching {targets} books from NDL Search, one request every {interval:g}s or more. "
+            "Press Ctrl-C to stop; progress is saved and the next run resumes."
+        )
+
+    def book(self, index: int, total: int, target: Target, result: FetchResult) -> None:
+        outcome = result.status
+        if result.match is not None:
+            outcome += f" ({result.match.method})"
+        line = Text.assemble((f"[{index}/{total}] ", "dim"), f"{target.book.asin} {outcome} {target.book.title}")
+        if result.error:
+            line.append(f" - {result.error}", style="red")
+        console.print(line, soft_wrap=True)
+
+    def waiting_for_lock(self) -> None:
+        err_console.print("Database is in use by another process; waiting to write...")
+
+
+@app.command()
+@_report_locked_db
+def enrich(
+    where: Optional[str] = typer.Option(
+        None, "--where", help="SQL condition on v_books selecting the books to fetch, e.g. \"genres = []\""
+    ),
+    limit: int = typer.Option(0, "--limit", "-n", min=0, help="Maximum books to fetch in this run (0 = all)"),
+    overrides: Optional[str] = typer.Option(
+        None, "--overrides", help="CSV with columns asin,isbn. Replaces all saved overrides; empty isbn = do not match"
+    ),
+    retry_missing: bool = typer.Option(
+        False, "--retry-missing", help="Also refetch books that were not found or left incomplete."
+    ),
+    refresh: bool = typer.Option(
+        False, "--refresh", help="Refetch the selected books regardless of their state (except excluded)."
+    ),
+    interval: float = typer.Option(
+        DEFAULT_INTERVAL, "--interval", min=DEFAULT_INTERVAL, help="Seconds between requests to NDL Search"
+    ),
+    db: Optional[str] = _db_option(),
+) -> None:
+    """Fetch bibliographic data from NDL Search and match it to books."""
+    db_path = _require_db(db)
+    try:
+        summary = run_enrich(
+            db_path,
+            _ndl_client(interval),
+            where=where,
+            limit=limit or None,
+            overrides_path=Path(overrides) if overrides else None,
+            retry_missing=retry_missing,
+            refresh=refresh,
+            reporter=_ConsoleReporter(),
+        )
+    except (FileNotFoundError, ValueError) as e:
+        _print_error(str(e))
+        raise typer.Exit(1)
+
+    if summary.overrides is not None:
+        changes = summary.overrides
+        console.print(
+            f"Overrides: {changes.total} rows saved; {len(changes.reset)} books reset, "
+            f"{len(changes.excluded)} books excluded."
+        )
+        if changes.unknown_asins:
+            unknown = ", ".join(changes.unknown_asins)
+            err_console.print(_styled("Warning:", "yellow", f" overrides for ASINs not in the library: {unknown}"))
+    counts = ", ".join(f"{status} {count}" for status, count in sorted(summary.counts.items()))
+    console.print(f"Fetched {summary.fetched} of {summary.targets} books" + (f": {counts}." if counts else "."))
+    if summary.interrupted:
+        err_console.print(_styled("Interrupted.", "yellow", " Saved the books fetched so far; rerun to resume."))
+        raise typer.Exit(130)
+    if summary.aborted:
+        _print_error(
+            "Stopped after repeated failures to reach NDL Search. Saved the books fetched so far; retry later."
+        )
+        raise typer.Exit(1)
+
+
+@app.command()
+@_report_locked_db
+def rematch(db: Optional[str] = _db_option()) -> None:
+    """Redo matching from saved candidates without contacting NDL Search."""
+    db_path = _require_db(db)
+    summary = run_rematch(
+        db_path, on_wait=lambda: err_console.print("Database is in use by another process; waiting to write...")
+    )
+    console.print(
+        f"Rematched {summary.books} books: {summary.changed} changed, {summary.lost} without a match."
     )
 
 

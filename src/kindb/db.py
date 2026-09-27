@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.resources
 import os
 from pathlib import Path
 
@@ -80,9 +81,86 @@ CREATE TABLE IF NOT EXISTS import_metadata_official (
 CREATE TABLE IF NOT EXISTS schema_meta (
     schema_hash VARCHAR NOT NULL
 );
+
+-- 以下は kindb enrich が NDL サーチから取得する書誌情報。import 系はこれらに触れない
+CREATE TABLE IF NOT EXISTS bib_fetches (
+    asin VARCHAR PRIMARY KEY,
+    status VARCHAR NOT NULL,
+    source VARCHAR,
+    stages VARCHAR,
+    error VARCHAR,
+    fetched_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bib_candidates (
+    asin VARCHAR NOT NULL,
+    candidate_id VARCHAR NOT NULL,
+    search_rank INTEGER NOT NULL,
+    item_xml VARCHAR NOT NULL,
+    PRIMARY KEY (asin, candidate_id)
+);
+
+CREATE TABLE IF NOT EXISTS bib_matches (
+    asin VARCHAR PRIMARY KEY,
+    method VARCHAR NOT NULL,
+    candidate_ids VARCHAR[] NOT NULL,
+    isbn VARCHAR,
+    paper_issued VARCHAR,
+    publisher VARCHAR,
+    pages INTEGER,
+    bib_series VARCHAR,
+    ndc VARCHAR,
+    ndc_edition VARCHAR,
+    matched_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bib_subjects (
+    asin VARCHAR NOT NULL,
+    subject_order INTEGER NOT NULL,
+    subject VARCHAR NOT NULL,
+    PRIMARY KEY (asin, subject_order)
+);
+
+CREATE TABLE IF NOT EXISTS bib_notes (
+    asin VARCHAR NOT NULL,
+    note_order INTEGER NOT NULL,
+    note VARCHAR NOT NULL,
+    PRIMARY KEY (asin, note_order)
+);
+
+CREATE TABLE IF NOT EXISTS bib_overrides (
+    asin VARCHAR PRIMARY KEY,
+    isbn VARCHAR
+);
+
+CREATE TABLE IF NOT EXISTS bib_metadata (
+    last_enrich_at TIMESTAMP,
+    last_enrich_fetched INTEGER,
+    last_rematch_at TIMESTAMP,
+    last_rematch_books INTEGER,
+    overrides_source_path VARCHAR,
+    overrides_updated_at TIMESTAMP
+);
 """
 
-VIEWS_SQL = """
+def _ndc_labels_view_sql() -> str:
+    """同梱の NDC9 の 3 桁の分類名(日本図書館協会、CC BY)を VALUES のビューにする。
+
+    テーブルにせずビュー定義に埋め込むのは、create_schema() を冪等な DDL だけに保つため。
+    TSV を差し替えればビュー定義とハッシュが変わり、読み取り系コマンドで自動的に移行される。
+    """
+    text = (importlib.resources.files("kindb") / "data" / "ndc9_3digit.tsv").read_text(encoding="utf-8")
+    rows = []
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        code, label = line.split("\t")
+        rows.append("('{}', '{}')".format(code.replace("'", "''"), label.replace("'", "''")))
+    values = ",\n    ".join(rows)
+    return f"CREATE OR REPLACE VIEW v_ndc_labels AS\nSELECT * FROM (VALUES\n    {values}\n) AS t(ndc3, label);\n"
+
+
+VIEWS_SQL = _ndc_labels_view_sql() + """
 CREATE OR REPLACE VIEW v_books AS
 SELECT
     b.asin,
@@ -134,8 +212,30 @@ SELECT
          FROM book_author_names an
          WHERE an.asin = b.asin),
         CAST([] AS VARCHAR[])
-    ) AS author_names_official
-FROM books b;
+    ) AS author_names_official,
+    m.isbn,
+    m.paper_issued,
+    m.publisher,
+    m.pages,
+    m.bib_series,
+    m.ndc,
+    nl.label AS ndc_label,
+    coalesce(
+        (SELECT list(bs.subject ORDER BY bs.subject_order)
+         FROM bib_subjects bs
+         WHERE bs.asin = b.asin),
+        CAST([] AS VARCHAR[])
+    ) AS subjects,
+    coalesce(
+        (SELECT list(bn.note ORDER BY bn.note_order)
+         FROM bib_notes bn
+         WHERE bn.asin = b.asin),
+        CAST([] AS VARCHAR[])
+    ) AS bib_notes,
+    m.method AS bib_match
+FROM books b
+LEFT JOIN bib_matches m ON m.asin = b.asin
+LEFT JOIN v_ndc_labels nl ON nl.ndc3 = substr(m.ndc, 1, 3);
 
 CREATE OR REPLACE VIEW v_author_counts AS
 SELECT

@@ -18,6 +18,7 @@ from kindb.cli import app
 from kindb.db import connect
 from kindb.importer import import_kindle_json
 from tests.create_fixture import create_kindle_json
+from tests.ndl_fixtures import FakeOpenSearch, item_xml, rss
 
 runner = CliRunner()
 
@@ -576,3 +577,102 @@ def _title(db_path: Path, asin: str) -> str:
         return con.execute("SELECT title FROM books WHERE asin = ?", [asin]).fetchone()[0]
     finally:
         con.close()
+
+
+# --- enrich / rematch --------------------------------------------------------------------------------
+
+
+def _fake_ndl(monkeypatch: pytest.MonkeyPatch) -> FakeOpenSearch:
+    ndl = FakeOpenSearch(
+        [
+            (
+                {"title": "テストの本", "creator": "山田太郎"},
+                rss([item_xml("R100000002-I000000001", "テストの本", isbn="978-4-8222-5085-0",
+                              subjects=("試験用件名",), ndc=("10", "007.6"))]),
+            )
+        ]
+    )
+    monkeypatch.setattr("kindb.cli._ndl_client", lambda interval: ndl.client())
+    return ndl
+
+
+def test_enrich_prints_progress_and_summary(imported_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_ndl(monkeypatch)
+    result = runner.invoke(app, ["enrich", "--db", str(imported_db)])
+    assert result.exit_code == 0, result.output
+    assert "[1/5] B000TEST01 found (edition) テストの本" in result.stdout
+    assert "Fetched 5 of 5 books: found 1, not_found 4." in result.stdout
+
+    status = runner.invoke(app, ["status", "--db", str(imported_db)])
+    assert re.search(r"Bib status: found\W+1\b", status.stdout)
+    assert re.search(r"Bib status: not_found\W+4\b", status.stdout)
+    assert re.search(r"Bib match: edition\W+1\b", status.stdout)
+    assert re.search(r"Bib not fetched\W+0\b", status.stdout)
+
+
+def test_status_counts_unfetched_books_before_enrich(imported_db: Path) -> None:
+    result = runner.invoke(app, ["status", "--db", str(imported_db)])
+    assert re.search(r"Bib not fetched\W+5\b", result.stdout)
+    assert "Bib status" not in result.stdout
+
+
+def test_enrich_ctrl_c_exits_130_after_saving(imported_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ndl = _fake_ndl(monkeypatch)
+
+    def interrupt(count: int) -> None:
+        if count == 3:
+            raise KeyboardInterrupt
+
+    ndl.on_call = interrupt
+    result = runner.invoke(app, ["enrich", "--db", str(imported_db)])
+    assert result.exit_code == 130
+    assert "Interrupted" in result.stderr
+    con = connect(imported_db, read_only=True)
+    try:
+        assert con.execute("SELECT asin FROM bib_fetches ORDER BY asin").fetchall() == [("B000TEST01",)]
+    finally:
+        con.close()
+
+
+def test_enrich_rejects_interval_below_the_floor(imported_db: Path) -> None:
+    result = runner.invoke(app, ["enrich", "--interval", "1", "--db", str(imported_db)])
+    assert result.exit_code == 2
+
+
+def test_enrich_reports_invalid_overrides(imported_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_ndl(monkeypatch)
+    csv_path = tmp_path / "o.csv"
+    csv_path.write_text("asin,isbn\nB000TEST01,123\n", encoding="utf-8")
+    result = runner.invoke(app, ["enrich", "--overrides", str(csv_path), "--db", str(imported_db)])
+    assert result.exit_code == 1
+    assert result.stderr.startswith("Error: line 2: invalid ISBN 123 for B000TEST01")
+
+
+def test_enrich_warns_about_overrides_for_unknown_asins(
+    imported_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_ndl(monkeypatch)
+    csv_path = tmp_path / "o.csv"
+    csv_path.write_text("asin,isbn\nB0NOTINLIB,\n", encoding="utf-8")
+    result = runner.invoke(app, ["enrich", "--overrides", str(csv_path), "--limit", "1", "--db", str(imported_db)])
+    assert result.exit_code == 0
+    assert "Overrides: 1 rows saved; 0 books reset, 1 books excluded." in result.stdout
+    assert "B0NOTINLIB" in result.stderr
+
+
+def test_rematch_reports_counts(imported_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_ndl(monkeypatch)
+    runner.invoke(app, ["enrich", "--db", str(imported_db)])
+    result = runner.invoke(app, ["rematch", "--db", str(imported_db)])
+    assert result.exit_code == 0
+    assert "Rematched 1 books: 0 changed, 0 without a match." in result.stdout
+
+
+def test_search_matches_ndl_subjects_without_showing_them(imported_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_ndl(monkeypatch)
+    runner.invoke(app, ["enrich", "--db", str(imported_db)])
+    result = runner.invoke(app, ["search", "試験用", "--db", str(imported_db)])
+    assert result.exit_code == 0
+    assert "B000TEST01" in result.stdout
+    assert "試験用件名" not in result.stdout
+    assert "Showing 1 of 1 results." in result.stdout

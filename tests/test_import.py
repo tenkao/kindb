@@ -229,6 +229,13 @@ def test_schema_tables_and_views(imported_db: Path) -> None:
     try:
         tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
         assert tables == {
+            "bib_candidates",
+            "bib_fetches",
+            "bib_matches",
+            "bib_metadata",
+            "bib_notes",
+            "bib_overrides",
+            "bib_subjects",
             "book_author_ids",
             "book_author_names",
             "book_authors",
@@ -245,6 +252,7 @@ def test_schema_tables_and_views(imported_db: Path) -> None:
             "v_book_series",
             "v_books",
             "v_genre_counts",
+            "v_ndc_labels",
             "v_series_counts",
         }
     finally:
