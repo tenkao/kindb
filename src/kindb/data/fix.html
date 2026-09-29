@@ -135,6 +135,7 @@ th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--lin
 th { font-size: 12px; font-weight: 500; color: var(--muted); background: var(--surface-2); white-space: nowrap; }
 tr:last-child td { border-bottom: 0; }
 tr.matched td { background: var(--accent-soft); }
+tr.pending-row td { background: var(--warn-soft); }
 td a { color: var(--accent); }
 td.nowrap { white-space: nowrap; }
 
@@ -409,11 +410,15 @@ footer.tray {
   }
   function unstage(asin) {
     if (state.busy) return;
+    var prev = state.staged[asin];
     delete state.staged[asin];
     renderTray();
     renderDetail();
     loadBooks();
-    focusById("detail-title");
+    // 取り消した操作をした場所にフォーカスを戻す(候補の行の「選択」、ISBN 欄、訂正の取り消しボタン)
+    if (!prev || prev.isbn === null) { focusById("override-remove"); return; }
+    var pick = document.querySelector('[data-pick-isbn="' + prev.isbn + '"]');
+    if (pick) pick.focus(); else focusById("isbn-input");
   }
   function focusById(id) {
     var node = document.getElementById(id);
@@ -459,13 +464,16 @@ footer.tray {
     ]));
 
     var staged = state.staged[book.asin];
-    if (staged) {
+    function cancelButton() {
+      return el("button", {
+        type: "button", class: "btn ghost", id: "staged-cancel", text: "キャンセル",
+        disabled: state.busy ? "disabled" : null, onclick: function () { unstage(book.asin); }
+      });
+    }
+    // 上の枠は登録済みの訂正(本の今の状態)だけに使う。反映待ちは、操作した場所の近くに出す
+    if (book.override && staged && staged.isbn === null) {
       pane.appendChild(el("div", { class: "override-box", style: "margin-top:16px" }, [
-        el("span", { text: staged.isbn ? "反映待ち: ISBN " + staged.isbn + " を指定" : "反映待ち: 訂正の取り消し" }),
-        el("button", {
-          type: "button", class: "btn ghost", id: "staged-cancel", text: "キャンセル",
-          disabled: state.busy ? "disabled" : null, onclick: function () { unstage(book.asin); }
-        })
+        el("span", { text: "反映待ち: 訂正の取り消し" }), cancelButton()
       ]));
     } else if (book.override) {
       pane.appendChild(el("div", { class: "override-box", style: "margin-top:16px" }, [
@@ -474,7 +482,8 @@ footer.tray {
                                        : "手動訂正で ISBN " + book.override.isbn + " を指定しています"
         }),
         el("button", {
-          type: "button", class: "btn danger", text: "訂正を取り消す", disabled: state.busy ? "disabled" : null,
+          type: "button", class: "btn danger", id: "override-remove", text: "訂正を取り消す",
+          disabled: state.busy ? "disabled" : null,
           title: "CSV から行を削除し、書名で検索し直します",
           onclick: function () { stage(book.asin, null, book.title); }
         })
@@ -494,25 +503,28 @@ footer.tray {
       var tbody = el("tbody");
       cands.forEach(function (c) {
         var pick;
+        var stagedHere = staged && staged.isbn && c.isbns.some(function (x) { return x.isbn === staged.isbn; });
         if (!c.isbns.length) {
           pick = el("span", { class: "hint", text: "ISBN なし" });
         } else {
           pick = el("div", { style: "display:grid;gap:4px" }, c.isbns.map(function (x) {
             if (!x.valid) return el("span", { class: "hint bad", text: "ISBN が不正" });
+            if (staged && staged.isbn === x.isbn) return cancelButton();
             return el("button", {
-              type: "button", class: "btn ghost",
+              type: "button", class: "btn ghost", "data-pick-isbn": x.isbn,
               text: c.isbns.length > 1 ? "選択 " + x.isbn : "選択",
               "aria-label": c.title + "(ISBN " + x.isbn + ")を選択",
-              disabled: state.busy || (staged && staged.isbn === x.isbn) ? "disabled" : null,
+              disabled: state.busy ? "disabled" : null,
               onclick: function () { stage(book.asin, x.isbn, book.title); }
             });
           }));
         }
         var titleCell = el("td", {}, [
           el("a", { href: c.link, target: "_blank", rel: "noopener noreferrer", text: c.title }),
-          c.matched ? el("div", {}, [chip("現在の照合", "accent")]) : null
+          c.matched ? el("div", {}, [chip("現在の照合", "accent")]) : null,
+          stagedHere ? el("div", {}, [chip("反映待ち", "warn")]) : null
         ]);
-        tbody.appendChild(el("tr", { class: c.matched ? "matched" : "" }, [
+        tbody.appendChild(el("tr", { class: stagedHere ? "pending-row" : c.matched ? "matched" : "" }, [
           titleCell,
           el("td", { class: "nowrap", text: c.volume || "" }),
           el("td", { text: c.edition || "" }),
@@ -563,10 +575,18 @@ footer.tray {
       e.preventDefault();
       submit();
     });
+    // 候補にない ISBN の反映待ちは、入力欄のすぐ下に出す
+    var inCandidates = staged && staged.isbn && cands.some(function (c) {
+      return c.isbns.some(function (x) { return x.isbn === staged.isbn; });
+    });
+    var typed = staged && staged.isbn && !inCandidates
+      ? el("div", { class: "override-box" }, [el("span", { text: "反映待ち: ISBN " + staged.isbn + " を指定" }), cancelButton()])
+      : null;
     pane.appendChild(el("section", { class: "block" }, [
       el("h3", { id: "isbn-heading", text: "ISBN を入力" }),
       el("p", { class: "hint", text: "候補にない紙版は、ISBN を入力して指定します。反映時に、その ISBN で NDL サーチを 1 回検索します。" }),
-      el("div", { class: "isbn-form" }, [input, add, hint])
+      el("div", { class: "isbn-form" }, [input, add, hint]),
+      typed
     ]));
   }
 
