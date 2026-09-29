@@ -368,7 +368,8 @@ def _candidate_volume(volume: str | None) -> _CandidateVolume:
     return _CandidateVolume(None, normalize_key(text.replace("(", " ").replace(")", " ")), True)
 
 
-_DERIVED_WORK_KEYS = frozenset(_NON_WORD.sub("", w).casefold() for w in _DERIVED_WORK_SUBTITLES)
+# 比べる副題と同じ normalize_key で作る。記号だけを除くと、長音符を除いた副題(アニメションガイド)と一致しない
+_DERIVED_WORK_KEYS = frozenset(normalize_key(w) for w in _DERIVED_WORK_SUBTITLES)
 # 書名を語に分ける区切り。特別な版の語(「蟲師 : 愛蔵版」「蟲師 (愛蔵版)」)を、語の一部(完全版マニュアル)と区別する
 _TITLE_TOKEN_SEPARATOR = re.compile(r"[\s:()\[\]〈〉【】]+")
 

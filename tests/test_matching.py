@@ -647,6 +647,10 @@ def test_novelization_does_not_share_the_manga_title() -> None:
     assert match is not None and match.candidate_ids == ("R100000002-I2",)
 
 
+def test_derived_work_subtitle_with_a_long_vowel_mark_does_not_share_the_title() -> None:
+    assert not is_adoptable(_book("エマ"), record("R100000002-I1", "エマ : アニメーションガイド"))
+
+
 @pytest.mark.parametrize("subtitle", ["小説版", "コミカライズ版"])
 def test_derived_work_subtitle_with_ban_does_not_share_the_title(subtitle: str) -> None:
     assert not is_adoptable(_book("エマ"), record("R100000002-I1", f"エマ : {subtitle}"))
