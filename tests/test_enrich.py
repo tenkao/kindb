@@ -837,6 +837,24 @@ def test_resumed_refetch_retries_books_that_failed(library: Path) -> None:
     assert ndl.calls == [TOYOTA_QUERY, TSUGE_QUERY]
 
 
+def test_refresh_that_ends_with_failed_books_keeps_the_record_to_retry_only_them(library: Path) -> None:
+    run_enrich(library, _standard_ndl().client())
+    ndl = _standard_ndl()
+    ndl.routes.insert(0, (TOYOTA_QUERY, urllib.error.URLError("down")))
+    summary = run_enrich(library, ndl.client(), refresh=True)
+    # 失敗した本は前回の found のまま残り、通常の実行では引かない。記録がなければ全冊の引き直しでしか直せない
+    assert summary.counts == {"found": 2, "error": 1}
+    assert _status(library)[TOYOTA] == "found"
+
+    ndl = _standard_ndl()
+    summary = run_enrich(library, ndl.client(), refresh=True)
+    assert summary.resumed_skipped == 2
+    assert ndl.calls == [TOYOTA_QUERY]
+    # 失敗した本を引き終えたので記録を消し、次の --refresh は全冊を対象にする
+    assert _rows(library, "SELECT count(*) FROM bib_refetch_pending")[0][0] == 0
+    assert run_enrich(library, _standard_ndl().client(), refresh=True).targets == 3
+
+
 def test_where_that_fails_only_when_evaluated_is_reported_before_overrides(library: Path, tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Invalid --where"):
         run_enrich(library, _standard_ndl().client(), refresh=True, where="acquired_at > 'yesterday'",

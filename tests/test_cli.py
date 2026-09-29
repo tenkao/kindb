@@ -714,6 +714,14 @@ def test_enrich_exits_1_when_it_stops_on_repeated_failures(imported_db: Path, mo
     assert "Stopped after repeated failures to reach NDL Search" in result.stderr
 
 
+def test_enrich_tells_how_to_retry_books_that_failed(imported_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ndl = _fake_ndl(monkeypatch)
+    ndl.on_call = lambda count: (_ for _ in ()).throw(urllib.error.URLError("down")) if count == 1 else None
+    result = runner.invoke(app, ["enrich", "--db", str(imported_db)])
+    assert result.exit_code == 0
+    assert "1 books failed to reach NDL Search; rerun the same command to retry them." in result.stderr
+
+
 def test_enrich_exits_1_when_ndl_asks_to_wait(imported_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ndl = _fake_ndl(monkeypatch)
     ndl.on_call = lambda _: (_ for _ in ()).throw(http_error(429, retry_after="3600"))

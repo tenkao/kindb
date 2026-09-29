@@ -631,8 +631,10 @@ def _run_enrich_locked(
     finally:
         flush(FINAL_LOCK_WAIT)
 
-    if refetching and not (summary.interrupted or summary.aborted or truncated):
-        # 対象をすべて引き直し終えたときだけ、再開の記録を消す。--limit で打ち切った回は、次の回が続きを引く
+    failed = summary.counts.get(STATUS_ERROR, 0) > 0
+    if refetching and not (summary.interrupted or summary.aborted or truncated or failed):
+        # 対象をすべて引き直し終えたときだけ、再開の記録を消す。--limit で打ち切った回は、次の回が続きを引く。
+        # 通信に失敗した本は前回の状態のまま残り、通常の実行では引かないので、記録を残して同じ指定の次の回で引く
         with closing(open_for_write(FINAL_LOCK_WAIT)) as con:
             con.execute("BEGIN TRANSACTION")
             con.execute("DELETE FROM bib_refetch_pending")
