@@ -383,7 +383,7 @@ def _is_derived_work_subtitle(subtitle: str) -> bool:
 def _is_special_edition(record: NdlRecord) -> bool:
     """愛蔵版や新装版などの特別な版か。版表示だけでなく書名も見る。
 
-    NDL は版を書名の副題や括弧に書くことがあり(「蟲師 : 愛蔵版」)、normalize_key は版表記も読みの括弧も消すので、
+    NDL は版を書名の副題に書くことがあり(「ぼくらの : 完全版」)、normalize_key は版表記も読みの括弧も消すので、
     書名の比較では通常の版と区別できない。
     """
     if _SPECIAL_EDITION.search(nfkc(record.edition or "")):
