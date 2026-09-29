@@ -386,9 +386,12 @@ footer.tray {
     var seq = ++detailSeq;
     return api("/api/books/" + encodeURIComponent(asin)).then(function (data) {
       if (seq !== detailSeq) return;
+      var changed = state.selected !== asin;
       state.selected = asin;
       state.detail = data;
       renderDetail();
+      // 別の本に移ったら先頭から見せる。前の本の候補の表を下まで見たあとだと、書名が画面の外に隠れるため
+      if (changed) document.getElementById("detail").scrollTop = 0;
       loadBooks();
       showBanner(null);
     }).catch(function (e) { showBanner(e.message); });
