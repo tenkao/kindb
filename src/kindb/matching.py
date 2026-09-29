@@ -369,6 +369,25 @@ def _candidate_volume(volume: str | None) -> _CandidateVolume:
 
 
 _DERIVED_WORK_KEYS = frozenset(_NON_WORD.sub("", w).casefold() for w in _DERIVED_WORK_SUBTITLES)
+# 書名を語に分ける区切り。特別な版の語(「蟲師 : 愛蔵版」「蟲師 (愛蔵版)」)を、語の一部(完全版マニュアル)と区別する
+_TITLE_TOKEN_SEPARATOR = re.compile(r"[\s:()\[\]〈〉【】]+")
+
+
+def _is_derived_work_subtitle(subtitle: str) -> bool:
+    # 「小説版」「コミカライズ版」のように「版」を付けた形も同じ別の作品として扱う
+    key = normalize_key(subtitle)
+    return key in _DERIVED_WORK_KEYS or key.removesuffix("版") in _DERIVED_WORK_KEYS
+
+
+def _is_special_edition(record: NdlRecord) -> bool:
+    """愛蔵版や新装版などの特別な版か。版表示だけでなく書名も見る。
+
+    NDL は版を書名の副題や括弧に書くことがあり(「蟲師 : 愛蔵版」)、normalize_key は版表記も読みの括弧も消すので、
+    書名の比較では通常の版と区別できない。
+    """
+    if _SPECIAL_EDITION.search(nfkc(record.edition or "")):
+        return True
+    return any(_SPECIAL_EDITION.fullmatch(token) for token in _TITLE_TOKEN_SEPARATOR.split(nfkc(record.title)))
 
 
 def _title_parts(record: NdlRecord) -> list[str]:
@@ -385,7 +404,7 @@ def _title_variants(record: NdlRecord, volume: _CandidateVolume) -> tuple[set[st
     入れることが多い(「線一本からはじめる伝わる絵の描き方 : ロジカルデッサンの技法 : まったく新しい…」)。
     """
     parts = _title_parts(record)
-    first = 1 if len(parts) > 1 and normalize_key(parts[1]) in _DERIVED_WORK_KEYS else 0
+    first = 1 if len(parts) > 1 and _is_derived_work_subtitle(parts[1]) else 0
     plain = {k for k in (normalize_key(" : ".join(parts[: i + 1])) for i in range(first, len(parts))) if k}
     with_volume = {k + volume.text for k in plain} if volume.text else set()
     return plain, with_volume
@@ -674,7 +693,7 @@ def decide_match(book: Book, records: Iterable[NdlRecord]) -> Match | None:
             adopted = kept
         else:
             edition_known = False
-    if not kindle.editions and all(_SPECIAL_EDITION.search(nfkc(r.edition or "")) for r in adopted):
+    if not kindle.editions and all(_is_special_edition(r) for r in adopted):
         # Kindle 書名に版表記がないのに、残ったのが愛蔵版や新装版だけなら、通常の版の紙版が NDL の結果にない
         edition_known = False
     single = len(adopted) == 1 and edition_known

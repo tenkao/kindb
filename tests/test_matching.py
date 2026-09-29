@@ -587,6 +587,21 @@ def test_lone_special_edition_is_not_the_edition_of_a_plain_kindle_title() -> No
     assert (match.method, match.isbn, match.ndc) == ("work", None, "726.1")
 
 
+@pytest.mark.parametrize("ndl_title", ["蟲師 : 愛蔵版", "蟲師 (愛蔵版)", "蟲師 愛蔵版"])
+def test_special_edition_in_the_ndl_title_is_not_the_edition_of_a_plain_kindle_title(ndl_title: str) -> None:
+    # 版表示が空でも、書名に愛蔵版と書かれた紙版の ISBN を付けない
+    aizoban = record("R100000002-I1", ndl_title, volume="8", isbn="978-4-06-376988-3", ndc=("9", "726.1"))
+    match = decide_match(_book("蟲師（８） (アフタヌーンコミックス)"), [aizoban])
+    assert match is not None
+    assert (match.method, match.isbn) == ("work", None)
+
+
+def test_special_edition_word_inside_a_title_word_is_not_an_edition() -> None:
+    book = _book("Excel完全版マニュアル")
+    match = decide_match(book, [record("R100000002-I1", "Excel完全版マニュアル", isbn="978-4-06-376988-3")])
+    assert match is not None and match.method == "edition"
+
+
 @pytest.mark.parametrize(
     "kindle_title", ["攻殻機動隊（１．５）", "竜馬がゆく (弐)", "竜馬がゆく (其の二)", "竜馬がゆく (第三話)"]
 )
@@ -630,6 +645,13 @@ def test_novelization_does_not_share_the_manga_title() -> None:
     manga = record("R100000002-I2", "エマ", volume="1", series=("Beam comix",))
     match = decide_match(book, [novel, manga])
     assert match is not None and match.candidate_ids == ("R100000002-I2",)
+
+
+@pytest.mark.parametrize("subtitle", ["小説版", "コミカライズ版"])
+def test_derived_work_subtitle_with_ban_does_not_share_the_title(subtitle: str) -> None:
+    assert not is_adoptable(_book("エマ"), record("R100000002-I1", f"エマ : {subtitle}"))
+    # 副題まで含めた書名なら同じ作品として採る
+    assert is_adoptable(_book(f"エマ {subtitle}"), record("R100000002-I1", f"エマ : {subtitle}"))
 
 
 def test_whole_title_reading_does_not_take_volume_1_of_a_sequel() -> None:
