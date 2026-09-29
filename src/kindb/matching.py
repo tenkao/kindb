@@ -690,10 +690,15 @@ def decide_match(book: Book, records: Iterable[NdlRecord]) -> Match | None:
     if not adopted:
         return None
     kindle = parse_kindle_title(book.title, book.series_title)
+    before_labels = len(adopted)
     for label in kindle.labels:
         adopted = _narrow(adopted, lambda r, label=label: _label_matches(label, r))
     # 版表記(新版、第2版、完全版)が候補のどれにも合わなければ、残った候補は別の版なので版の属性を付けない
     edition_known = True
+    if not kindle.editions and len(adopted) < before_labels and all(_record_editions(r) for r in adopted):
+        # 版表記のない Kindle 書名で、レーベルで絞った残りが新版や改訂版だけなら、版を定めない。NDL の叢書名の
+        # 書き方は版ごとに違うことがあり(旧版「早川文庫」、新版「ハヤカワ文庫 JA」)、旧版だけが外れうるため
+        edition_known = False
     for edition in kindle.editions:
         kept = [r for r in adopted if _edition_matches(edition, r)]
         if kept:

@@ -596,6 +596,19 @@ def test_special_edition_in_the_ndl_title_is_not_the_edition_of_a_plain_kindle_t
     assert (match.method, match.isbn) == ("work", None)
 
 
+def test_label_narrowing_that_leaves_only_a_later_edition_does_not_fix_the_edition() -> None:
+    # 実データ: NDL は旧版の叢書名を「早川文庫」、新版を「ハヤカワ文庫 JA」と書くので、レーベルで旧版だけが外れた
+    book = _book("虐殺器官 (ハヤカワ文庫JA)")
+    old = record("R100000002-I1", "虐殺器官", series=("早川文庫 ; JA984",), isbn="978-4-15-030984-8")
+    new = record("R100000002-I2", "虐殺器官", edition="新版", series=("ハヤカワ文庫 JA ; 1165",),
+                 isbn="978-4-15-031165-0")
+    match = decide_match(book, [old, new])
+    assert match is not None
+    assert (match.method, match.isbn) == ("work", None)
+    # レーベルで絞らなかったなら、版表示のある紙版しか結果になくても従来どおり定める
+    assert decide_match(_book("虐殺器官"), [new]).method == "edition"
+
+
 def test_edition_statement_matches_the_edition_written_in_the_ndl_title() -> None:
     book = _book("蟲師（８） 愛蔵版")
     plain = record("R100000002-I1", "蟲師", volume="8", isbn="4-06-314393-9")
