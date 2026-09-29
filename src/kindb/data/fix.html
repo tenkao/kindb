@@ -548,7 +548,12 @@ footer.tray {
       stage(book.asin, isbn13(input.value.trim()), book.title);
     }
     add.addEventListener("click", submit);
-    input.addEventListener("keydown", function (e) { if (e.key === "Enter") submit(); });
+    input.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter") return;
+      // 反映待ちに入れるとフォーカスが「やめる」に移る。既定の動作を止めないと、同じ Enter でそのボタンも押される
+      e.preventDefault();
+      submit();
+    });
     pane.appendChild(el("section", { class: "block" }, [
       el("h3", { id: "isbn-heading", text: "ISBN を入力する" }),
       el("p", { class: "hint", text: "候補にない紙版は、調べた ISBN を入れてください。反映すると、その ISBN で NDL サーチを 1 回引きます。" }),
