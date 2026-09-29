@@ -1,6 +1,6 @@
 # kindb 手動テストシナリオ
 
-kindb v0.4 を実際のターミナルで目視確認するためのシナリオ。主入力は `kindle.json`。任意で公式 `Kindle.zip` を追加取り込みし、ジャンル・シリーズ・Amazon 著者 ID を補完する。§8.5 だけは NDL サーチに実際に問い合わせる(数十件)。
+kindb v0.4 を実際のターミナルで目視確認するためのシナリオ。主入力は `kindle.json`。任意で公式 `Kindle.zip` を追加取り込みし、ジャンル・シリーズ・Amazon 著者 ID を補完する。§8.5 と §8.6 は NDL サーチに実際に問い合わせる(合わせて数十件)。
 
 ## 0. 準備
 
@@ -28,7 +28,7 @@ kindb --help
 ```
 
 期待:
-- `kindb --help` に `import`, `import-official`, `status`, `search`, `query`, `authors`, `recent`, `enrich`, `rematch`, `delete` が表示される。
+- `kindb --help` に `import`, `import-official`, `status`, `search`, `query`, `authors`, `recent`, `enrich`, `rematch`, `fix`, `delete` が表示される。
 - `genres`, `series`, `reading` は表示されない。
 
 ## 1. import
@@ -561,7 +561,7 @@ kindb fix --db "$BIB_DB" --overrides /tmp/kindb_manual/overrides.csv
 画面での操作:
 1. 「すべて」を押し、検索欄に `ヒモ` と入れて `B0GMYR661F` を選ぶ。保存済みの候補の表が出て、今の照合の行に「今の照合」が付く。書名は NDL サーチへのリンク。
 2. ISBN 欄に `9784822250851`(検査数字の誤り)を入れると、欄が赤くなり「検査数字が合いません」と出て、「この ISBN にする」を押せない。`9784822250850` に直すと押せる。押すと下に「反映待ち 1 冊」と「ISBN の指定 1 冊(NDL に 1 回)」が出る。
-3. `B000NOBOOK` を選び、「訂正を取り消す」を押す。反映待ちが 2 冊になり、「訂正の取り消し 1 冊(書名で引き直し…)」が加わる。
+3. 検索欄を空にして `B000NOBOOK` を選び、「訂正を取り消す」を押す。反映待ちが 2 冊になり、「訂正の取り消し 1 冊(書名で引き直し…)」が加わる。
 4. 「反映する」を押す。問い合わせ中の表示のあと、「反映しました。引き直した本: 2 冊」と 1 冊ずつの結果が出る。`B0GMYR661F` は「ISBN で指定 9784822250850」、`B000NOBOOK` は「見つからない」。
 
 期待(反映のあと):

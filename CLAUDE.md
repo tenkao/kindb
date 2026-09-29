@@ -20,7 +20,7 @@ kindb は、Chrome 拡張で取得した `kindle.json`(主データ)と、任意
 - `src/kindb/ndl.py`: NDL サーチ OpenSearch の呼び出し(間隔、429)と RSS の解析。標準ライブラリだけで書く。
 - `src/kindb/matching.py`: 書名の正規化と照合の規則。通信も DB も扱わない純粋関数。
 - `src/kindb/enrich.py`: `run_enrich()` / `run_rematch()`。対象の選択、手動訂正、取得の進行、まとめた書き込み。
-- `src/kindb/fixui.py` / `src/kindb/data/fix.html`: `kindb fix` の手動訂正の Web UI。127.0.0.1 だけで待ち受け、訂正の CSV を書いて `run_enrich()` で反映する。標準ライブラリだけで書く。
+- `src/kindb/fixui.py` / `src/kindb/data/fix.html`: `kindb fix` の手動訂正の Web UI。127.0.0.1 だけで待ち受け、訂正の CSV を書いて `run_enrich()` で反映する。サーバは標準ライブラリの `http.server`、画面は外部の資源を読まない素の HTML と JS で書き、Web フレームワークを足さない。
 - `scripts/build_ndc_table.py`: 配布元の `ndc9.ttl` から NDC の分類名の TSV を作る。
 - `tests/create_fixture.py` / `tests/create_official_fixture.py`: テストと手動確認で使う fixture の生成。期待値の件数はこの内容に依存する。
 - `tests/ndl_fixtures.py`: NDL の応答を組み立てる関数と、通信しない `FakeOpenSearch`。テストは NDL に通信しない。
