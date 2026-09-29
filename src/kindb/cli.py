@@ -484,7 +484,7 @@ def enrich(
         raise typer.Exit(1)
     failed = summary.counts.get("error", 0)
     if failed:
-        message = f" {failed} books failed to reach NDL Search; rerun the same command to retry them."
+        message = f" {failed} books could not be fetched from NDL Search; rerun the same command to retry them."
         err_console.print(_styled("Warning:", "yellow", message))
 
 
