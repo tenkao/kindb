@@ -596,6 +596,18 @@ def test_special_edition_in_the_ndl_title_is_not_the_edition_of_a_plain_kindle_t
     assert (match.method, match.isbn) == ("work", None)
 
 
+def test_edition_statement_matches_the_edition_written_in_the_ndl_title() -> None:
+    book = _book("蟲師（８） 愛蔵版")
+    plain = record("R100000002-I1", "蟲師", volume="8", isbn="4-06-314393-9")
+    aizoban = record("R100000002-I2", "蟲師 : 愛蔵版", volume="8", isbn="978-4-06-376988-3")
+    match = decide_match(book, [plain, aizoban])
+    assert match is not None
+    assert (match.method, match.isbn) == ("edition", "9784063769883")
+    # 版表示があれば、書名の版表記より版表示を使う
+    stated = record("R100000002-I3", "蟲師 : 愛蔵版", volume="8", edition="新装版", isbn="978-4-06-376988-3")
+    assert decide_match(book, [plain, stated]).method == "work"
+
+
 def test_special_edition_word_inside_a_title_word_is_not_an_edition() -> None:
     book = _book("Excel完全版マニュアル")
     match = decide_match(book, [record("R100000002-I1", "Excel完全版マニュアル", isbn="978-4-06-376988-3")])

@@ -391,6 +391,13 @@ def _is_special_edition(record: NdlRecord) -> bool:
     return any(_SPECIAL_EDITION.fullmatch(token) for token in _TITLE_TOKEN_SEPARATOR.split(nfkc(record.title)))
 
 
+def _record_editions(record: NdlRecord) -> list[str]:
+    """候補の版表記。版表示があればそれだけを使い、空なら書名の語から拾う(「蟲師 : 愛蔵版」)。"""
+    if (record.edition or "").strip():
+        return [record.edition]
+    return [token for token in _TITLE_TOKEN_SEPARATOR.split(nfkc(record.title)) if _EDITION_TOKEN.match(token)]
+
+
 def _title_parts(record: NdlRecord) -> list[str]:
     title = nfkc(record.title)
     # 並列タイトル(「X = Y : Z」の Y)は書名の比較に使わない。後ろの「 : 」は残す
@@ -533,8 +540,7 @@ def _edition_matches(edition: str, record: NdlRecord) -> bool:
     # normalize_key は版表記を消すので使わない。使うと空文字列の包含になり、どの版とも一致してしまう。
     # 包含でなく一致で比べる。包含だと「新版」が「改訂新版」と一致し、あとの版を選んでしまう
     wanted = _NON_WORD.sub("", nfkc(edition)).casefold()
-    actual = _NON_WORD.sub("", nfkc(record.edition or "")).casefold()
-    return bool(wanted) and wanted == actual
+    return bool(wanted) and any(wanted == _NON_WORD.sub("", nfkc(a)).casefold() for a in _record_editions(record))
 
 
 def _narrow(records: list[NdlRecord], predicate) -> list[NdlRecord]:
