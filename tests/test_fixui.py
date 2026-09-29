@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import socket
+import stat
+import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -14,10 +18,11 @@ from typer.testing import CliRunner
 
 from kindb import fixui
 from kindb.cli import app
+from kindb.db import DatabaseLockedError, connect
 from kindb.enrich import EnrichLockedError, run_enrich
 from kindb.fixui import FixServer, apply_changes, book_detail, list_books, load_current_overrides
 from kindb.matching import normalize_isbn
-from tests.ndl_fixtures import FakeOpenSearch, item_xml, rss
+from tests.ndl_fixtures import FakeOpenSearch, http_error, item_xml, rss
 from tests.test_enrich import (
     HIMO,
     HIMO_QUERY,
@@ -77,10 +82,33 @@ def test_detail_returns_candidates_with_13_digit_isbns_and_the_current_match(lib
     _fetched(library)
     detail = book_detail(library, TSUGE, {})
     cands = {c["id"]: c for c in detail["candidates"]}
-    assert cands["R100000002-I000001657059"]["isbns"] == [normalize_isbn("4-06-201085-6")]
+    assert cands["R100000002-I000001657059"]["isbns"] == [{"isbn": normalize_isbn("4-06-201085-6"), "valid": True}]
     assert cands["R100000002-I030280980"]["matched"] is True
     assert cands["R100000002-I000001657059"]["matched"] is False
     assert detail["book"]["match"] == "edition"
+
+
+def test_candidate_isbn_with_a_wrong_check_digit_cannot_be_picked(library: Path) -> None:
+    # 反映は検査数字の合わない ISBN を断るので、選べると一緒に反映待ちにした本までまとめて断られる
+    typo = item_xml("R100000002-I1", "トヨタ生産方式", isbn="978-4-478-46037-4")
+    ndl = FakeOpenSearch([(TOYOTA_QUERY, rss([typo]))])
+    run_enrich(library, ndl.client(), where=f"asin = '{TOYOTA}'")
+    assert book_detail(library, TOYOTA, {})["candidates"][0]["isbns"] == [{"isbn": "9784478460374", "valid": False}]
+
+
+def test_found_book_without_a_match_is_listed_for_review(library: Path) -> None:
+    _fetched(library)
+    con = connect(library)
+    try:
+        con.execute("DELETE FROM bib_matches WHERE asin = ?", [HIMO])
+    finally:
+        con.close()
+    assert {b["asin"] for b in list_books(library, {})["books"]} == {HIMO, TOYOTA}
+
+
+def test_search_treats_like_wildcards_as_plain_characters(library: Path) -> None:
+    assert list_books(library, {}, view="all", query="%")["total"] == 0
+    assert list_books(library, {}, view="all", query="_")["total"] == 0
 
 
 def test_unknown_asin_in_detail_is_a_lookup_error(library: Path) -> None:
@@ -107,7 +135,7 @@ def test_apply_writes_the_csv_and_fetches_only_the_changed_book_by_isbn(library:
 
 def test_picking_an_isbn_10_candidate_matches_it_by_isbn(library: Path, tmp_path: Path) -> None:
     _fetched(library)
-    hardcover_isbn = book_detail(library, TSUGE, {})["candidates"][0]["isbns"][0]
+    hardcover_isbn = book_detail(library, TSUGE, {})["candidates"][0]["isbns"][0]["isbn"]
     ndl = FakeOpenSearch([({"isbn": hardcover_isbn}, rss([TSUGE_HARDCOVER]))])
     apply_changes(library, _csv(tmp_path), {TSUGE: hardcover_isbn}, _factory(ndl))
     assert _rows(library, "SELECT method, candidate_ids FROM bib_matches WHERE asin = ?", [TSUGE]) == [
@@ -174,12 +202,56 @@ def test_apply_rejects_bad_input_before_writing_anything(
     assert not csv_path.exists() and ndl.calls == []
 
 
-def test_apply_reports_another_enrich_instead_of_waiting(library: Path, tmp_path: Path) -> None:
+@pytest.mark.parametrize("existing", [True, False])
+def test_apply_reports_another_enrich_and_leaves_the_csv_as_it_was(
+    library: Path, tmp_path: Path, existing: bool
+) -> None:
     ndl = FakeOpenSearch([({"isbn": TOYOTA_ISBN}, rss([TOYOTA_BY_ISBN]))])
+    csv_path = _csv(tmp_path, f"{TSUGE},\n") if existing else tmp_path / "overrides.csv"
+    before = csv_path.read_bytes() if existing else None
     with _enrich_lock_held_elsewhere(library):
         with pytest.raises(EnrichLockedError):
-            apply_changes(library, _csv(tmp_path), {TOYOTA: TOYOTA_ISBN}, _factory(ndl))
+            apply_changes(library, csv_path, {TOYOTA: TOYOTA_ISBN}, _factory(ndl))
     assert ndl.calls == []
+    assert (csv_path.read_bytes() if csv_path.exists() else None) == before
+
+
+def test_apply_refuses_without_waiting_when_the_db_is_in_use(library: Path, tmp_path: Path) -> None:
+    holder = subprocess.Popen(
+        [sys.executable, "-c",
+         "import duckdb, sys; con = duckdb.connect(sys.argv[1]); print('ready', flush=True); sys.stdin.read()",
+         str(library)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+    )
+    csv_path = _csv(tmp_path)
+    try:
+        assert holder.stdout.readline().strip() == "ready"
+        with pytest.raises(DatabaseLockedError):
+            apply_changes(library, csv_path, {}, _factory(FakeOpenSearch()))
+    finally:
+        holder.communicate(input="", timeout=30)
+    assert csv_path.read_text(encoding="utf-8") == "asin,isbn\n"
+
+
+def test_apply_reports_books_that_could_not_be_fetched(library: Path, tmp_path: Path) -> None:
+    ndl = FakeOpenSearch([({"isbn": TOYOTA_ISBN}, http_error(500))])
+    result = apply_changes(library, _csv(tmp_path), {TOYOTA: TOYOTA_ISBN}, _factory(ndl))
+    assert (result.fetched, result.failed, result.aborted) == (1, 1, None)
+    # 訂正を取り消すと書名で引き直す。そこで長い Retry-After が返れば、止めたことを返す
+    ndl = FakeOpenSearch([(TOYOTA_QUERY, http_error(429, retry_after="3600"))])
+    result = apply_changes(library, _csv(tmp_path), {TOYOTA: None}, _factory(ndl))
+    assert (result.changed, result.aborted) == ([TOYOTA], "retry_later")
+
+
+def test_apply_writes_through_a_symlinked_csv_and_keeps_its_permissions(library: Path, tmp_path: Path) -> None:
+    real = _csv(tmp_path, f"{TSUGE},\n")
+    real.chmod(0o640)
+    link = tmp_path / "link.csv"
+    link.symlink_to(real)
+    apply_changes(library, link, {TOYOTA: TOYOTA_ISBN}, _factory(FakeOpenSearch()))
+    assert link.is_symlink()
+    assert real.read_text(encoding="utf-8") == f"asin,isbn\n{TSUGE},\n{TOYOTA},{TOYOTA_ISBN}\n"
+    assert stat.S_IMODE(real.stat().st_mode) == 0o640
 
 
 def test_current_overrides_come_from_the_db_when_the_csv_does_not_exist(library: Path, tmp_path: Path) -> None:
@@ -250,6 +322,40 @@ def test_apply_over_http(server: FixServer, library: Path) -> None:
     assert json.loads(body)["book"]["match"] == "isbn"
 
 
+def test_ctrl_c_during_apply_stops_the_server_after_answering(
+    library: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(fixui, "apply_changes", lambda *args: fixui.ApplyResult(interrupted=True))
+    srv = FixServer(("127.0.0.1", 0), library, tmp_path / "overrides.csv", _factory(FakeOpenSearch()))
+    stopped: list[bool] = []
+
+    def serve() -> None:
+        try:
+            srv.serve_forever()
+        except KeyboardInterrupt:
+            stopped.append(True)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        status, body = _request(srv, "/api/apply", token=srv.token, body={"changes": {}})
+        assert status == 200 and json.loads(body)["interrupted"] is True
+        thread.join(timeout=10)
+        assert stopped == [True]
+    finally:
+        srv.server_close()
+
+
+def test_a_port_used_by_a_wildcard_listener_is_refused(library: Path, tmp_path: Path) -> None:
+    # 0.0.0.0 で待ち受ける他のサービスと同じ番号で起動すると、そのサービスへの接続を横取りする
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as other:
+        other.bind(("0.0.0.0", 0))
+        other.listen()
+        port = other.getsockname()[1]
+        with pytest.raises(OSError):
+            FixServer(("127.0.0.1", port), library, tmp_path / "overrides.csv", _factory(FakeOpenSearch()))
+
+
 def test_apply_requires_json(server: FixServer) -> None:
     status, body = _request(server, "/api/apply", token=server.token, body={"changes": {}}, content_type="text/plain")
     assert status == 400 and "application/json" in body
@@ -289,7 +395,10 @@ def test_fix_command_refuses_a_broken_csv(library: Path, tmp_path: Path, monkeyp
 
 
 def test_fix_defaults_to_the_csv_enrich_last_used(library: Path, tmp_path: Path) -> None:
-    csv_path = _csv(tmp_path)
+    # DB と別のディレクトリに置き、記録したパスが消えたら DB の隣に戻ることを区別して確かめる
+    (tmp_path / "sub").mkdir()
+    csv_path = (tmp_path / "sub" / "mine.csv")
+    csv_path.write_text("asin,isbn\n", encoding="utf-8")
     run_enrich(library, FakeOpenSearch().client(), where="FALSE", overrides_path=csv_path)
     assert fixui.resolve_overrides_path(library, None) == csv_path.resolve()
     csv_path.unlink()

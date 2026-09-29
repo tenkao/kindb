@@ -171,3 +171,8 @@ def _split_top_level_csv(text: str) -> list[str]:
             start = i + 1
     items.append(text[start:])
     return items
+
+
+def escape_like(term: str) -> str:
+    """LIKE / ILIKE のパターンに埋める語の % と _ と \\ を、ESCAPE '\\' 用にエスケープする。"""
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

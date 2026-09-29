@@ -17,11 +17,11 @@
   --accent: #1d6f63;
   --accent-ink: #fcfcfa;
   --accent-soft: #d9ebe6;
-  --good: #2f7d3b;
+  --good: #2a7036;
   --good-soft: #dcecd9;
-  --warn: #93650f;
+  --warn: #7f570b;
   --warn-soft: #f3e6c8;
-  --bad: #b2402b;
+  --bad: #a53a27;
   --bad-soft: #f5dcd4;
   --font: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", system-ui, sans-serif;
   --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
@@ -61,7 +61,11 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .mono { font-family: var(--mono); font-size: 0.92em; font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }
 
-.app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
+.app { display: grid; grid-template-rows: auto auto 1fr auto; height: 100%; }
+.app > header.bar { grid-row: 1; }
+.app > #banner { grid-row: 2; }
+.app > main { grid-row: 3; }
+.app > footer.tray { grid-row: 4; }
 
 header.bar {
   display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px;
@@ -71,7 +75,7 @@ header.bar h1 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: 0.
 header.bar .paths { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); min-width: 0; }
 header.bar .paths span { overflow-wrap: anywhere; }
 .notice {
-  grid-column: 1 / -1; margin: 0; padding: 8px 20px; font-size: 13px;
+  margin: 0; padding: 8px 20px; font-size: 13px;
   background: var(--warn-soft); color: var(--warn); border-bottom: 1px solid var(--line);
 }
 .error-banner { background: var(--bad-soft); color: var(--bad); }
@@ -186,6 +190,7 @@ footer.tray {
       <span>訂正の CSV: <span class="mono" id="csv-path">…</span></span>
     </div>
   </header>
+  <p class="notice error-banner" id="banner" role="alert" hidden></p>
 
   <main>
     <div class="list-pane">
@@ -199,7 +204,7 @@ footer.tray {
       </div>
       <ul class="books" id="books" aria-label="本の一覧"></ul>
     </div>
-    <div class="detail-pane" id="detail" aria-live="polite">
+    <div class="detail-pane" id="detail">
       <p class="placeholder">左の一覧から本を選んでください。</p>
     </div>
   </main>
@@ -208,13 +213,13 @@ footer.tray {
     <div class="tray-head">
       <h2 id="tray-title">反映待ち</h2>
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-        <span class="busy" id="busy" hidden></span>
+        <span class="busy" id="busy" role="status" hidden></span>
         <button type="button" class="btn" id="apply">反映する</button>
       </div>
     </div>
     <p class="hint" id="tray-summary"></p>
     <ul class="staged" id="staged"></ul>
-    <div class="results" id="results" hidden></div>
+    <div class="results" id="results" role="status" hidden></div>
   </footer>
 </div>
 
@@ -294,15 +299,14 @@ footer.tray {
   }
 
   function showBanner(message) {
-    var old = document.getElementById("banner");
-    if (old) old.remove();
-    if (!message) return;
-    var banner = el("p", { class: "notice error-banner", id: "banner", role: "alert", text: message });
-    document.querySelector("header.bar").after(banner);
+    var banner = document.getElementById("banner");
+    banner.textContent = message || "";
+    banner.hidden = !message;
   }
 
   // --- ISBN の検査数字(サーバでも同じ検査をする) ---
-  function isbnDigits(raw) { return raw.replace(/[\s-]/g, "").toUpperCase(); }
+  function isbnDigits(raw) { return raw.normalize("NFKC").replace(/[^0-9Xx]/g, "").toUpperCase(); }
+  function isbnShapeOk(raw) { return /^(\d{13}|\d{9}[\dX])$/.test(isbnDigits(raw)); }
   function isbnValid(raw) {
     var s = isbnDigits(raw), i, sum = 0;
     if (/^\d{13}$/.test(s)) {
@@ -315,6 +319,13 @@ footer.tray {
       return (check === 10 ? "X" : String(check)) === s[9];
     }
     return false;
+  }
+  function isbn13(raw) {
+    var s = isbnDigits(raw);
+    if (s.length === 13) return s;
+    var core = "978" + s.slice(0, 9), sum = 0;
+    for (var i = 0; i < 12; i++) sum += Number(core[i]) * (i % 2 ? 3 : 1);
+    return core + String((10 - (sum % 10)) % 10);
   }
 
   // --- 状態 ---
@@ -331,14 +342,19 @@ footer.tray {
 
   // --- 一覧 ---
   var searchTimer = null;
+  var listSeq = 0;
   function loadBooks() {
     var params = new URLSearchParams({ view: state.view, q: state.q });
+    var seq = ++listSeq;
     return api("/api/books?" + params).then(function (data) {
+      if (seq !== listSeq) return;  // あとから送った要求の応答を、先に送った要求の応答で上書きしない
       var list = document.getElementById("books");
+      var focused = document.activeElement && document.activeElement.dataset
+        ? document.activeElement.dataset.asin : null;
       list.replaceChildren();
       data.books.forEach(function (book) {
         var item = el("button", {
-          type: "button", class: "book-item",
+          type: "button", class: "book-item", "data-asin": book.asin,
           "aria-current": book.asin === state.selected ? "true" : "false",
           onclick: function () { selectBook(book.asin); }
         }, [
@@ -348,10 +364,12 @@ footer.tray {
           ]))
         ]);
         list.appendChild(el("li", {}, [item]));
+        if (book.asin === focused) item.focus();
       });
       var shown = data.books.length;
       document.getElementById("count").textContent =
         shown < data.total ? data.total + " 冊のうち " + shown + " 冊を表示。書名で絞ってください" : data.total + " 冊";
+      showBanner(null);
     }).catch(function (e) { showBanner(e.message); });
   }
 
@@ -363,29 +381,39 @@ footer.tray {
   }
 
   // --- 詳細 ---
+  var detailSeq = 0;
   function selectBook(asin) {
-    state.selected = asin;
-    document.querySelectorAll(".book-item").forEach(function (b) {
-      b.setAttribute("aria-current", "false");
-    });
+    var seq = ++detailSeq;
     return api("/api/books/" + encodeURIComponent(asin)).then(function (data) {
+      if (seq !== detailSeq) return;
+      state.selected = asin;
       state.detail = data;
       renderDetail();
       loadBooks();
+      showBanner(null);
     }).catch(function (e) { showBanner(e.message); });
   }
 
+  // 反映中は反映待ちを変えない。反映が終わると送った分を反映待ちから消すので、途中の変更が黙って消えるため
   function stage(asin, isbn, title) {
+    if (state.busy) return;
     state.staged[asin] = { isbn: isbn, title: title };
     renderTray();
     renderDetail();
     loadBooks();
+    focusById("staged-cancel");
   }
   function unstage(asin) {
+    if (state.busy) return;
     delete state.staged[asin];
     renderTray();
     renderDetail();
     loadBooks();
+    focusById("detail-title");
+  }
+  function focusById(id) {
+    var node = document.getElementById(id);
+    if (node) node.focus();
   }
 
   function renderDetail() {
@@ -415,7 +443,7 @@ footer.tray {
       book.image ? el("img", { src: book.image, alt: "", referrerpolicy: "no-referrer", loading: "lazy" })
                  : el("span"),
       el("div", {}, [
-        el("h2", { text: book.title }),
+        el("h2", { id: "detail-title", tabindex: "-1", text: book.title }),
         el("div", { class: "meta", style: "display:flex;gap:4px;flex-wrap:wrap" }, statusChips(book)),
         facts
       ])
@@ -425,7 +453,10 @@ footer.tray {
     if (staged) {
       pane.appendChild(el("div", { class: "override-box", style: "margin-top:16px" }, [
         el("span", { text: staged.isbn ? "反映待ち: ISBN " + staged.isbn + " にする" : "反映待ち: 訂正を取り消す" }),
-        el("button", { type: "button", class: "btn ghost", text: "やめる", onclick: function () { unstage(book.asin); } })
+        el("button", {
+          type: "button", class: "btn ghost", id: "staged-cancel", text: "やめる",
+          disabled: state.busy ? "disabled" : null, onclick: function () { unstage(book.asin); }
+        })
       ]));
     } else if (book.override) {
       pane.appendChild(el("div", { class: "override-box", style: "margin-top:16px" }, [
@@ -434,7 +465,7 @@ footer.tray {
                                        : "訂正で ISBN " + book.override.isbn + " を指定しています"
         }),
         el("button", {
-          type: "button", class: "btn danger", text: "訂正を取り消す",
+          type: "button", class: "btn danger", text: "訂正を取り消す", disabled: state.busy ? "disabled" : null,
           title: "CSV から行を消し、書名で引き直します",
           onclick: function () { stage(book.asin, null, book.title); }
         })
@@ -457,12 +488,14 @@ footer.tray {
         if (!c.isbns.length) {
           pick = el("span", { class: "hint", text: "ISBN なし" });
         } else {
-          pick = el("div", { style: "display:grid;gap:4px" }, c.isbns.map(function (isbn) {
+          pick = el("div", { style: "display:grid;gap:4px" }, c.isbns.map(function (x) {
+            if (!x.valid) return el("span", { class: "hint bad", text: "検査数字が合わない" });
             return el("button", {
               type: "button", class: "btn ghost",
-              text: c.isbns.length > 1 ? "選ぶ " + isbn : "これにする",
-              disabled: staged && staged.isbn === isbn ? "disabled" : null,
-              onclick: function () { stage(book.asin, isbn, book.title); }
+              text: c.isbns.length > 1 ? "選ぶ " + x.isbn : "これにする",
+              "aria-label": c.title + "(ISBN " + x.isbn + ")にする",
+              disabled: state.busy || (staged && staged.isbn === x.isbn) ? "disabled" : null,
+              onclick: function () { stage(book.asin, x.isbn, book.title); }
             });
           }));
         }
@@ -478,7 +511,7 @@ footer.tray {
           el("td", { text: c.publishers.join(", ") }),
           el("td", { class: "nowrap mono", text: c.issued || "" }),
           el("td", { class: "nowrap", text: c.extent || "" }),
-          el("td", { class: "nowrap mono", text: c.isbns.join("\n") }),
+          el("td", { class: "nowrap mono", text: c.isbns.map(function (x) { return x.isbn; }).join("\n") }),
           el("td", {}, [pick])
         ]));
       });
@@ -495,7 +528,7 @@ footer.tray {
     // ISBN の直接入力
     var input = el("input", {
       id: "isbn-input", inputmode: "numeric", autocomplete: "off", placeholder: "978…",
-      "aria-describedby": "isbn-hint"
+      "aria-labelledby": "isbn-heading", "aria-describedby": "isbn-hint"
     });
     var hint = el("span", { class: "hint", id: "isbn-hint", text: "ISBN-13 か ISBN-10(ハイフンは不要)" });
     var add = el("button", { type: "button", class: "btn", text: "この ISBN にする", disabled: "disabled" });
@@ -505,17 +538,19 @@ footer.tray {
       input.setAttribute("aria-invalid", v !== "" && !ok ? "true" : "false");
       hint.className = v !== "" && !ok ? "hint bad" : "hint";
       hint.textContent = v === "" ? "ISBN-13 か ISBN-10(ハイフンは不要)"
-        : ok ? "検査数字は正しい形です" : "検査数字が合いません。打ち間違いを確かめてください";
-      if (ok) add.removeAttribute("disabled"); else add.setAttribute("disabled", "disabled");
+        : ok ? "検査数字は正しい形です"
+        : !isbnShapeOk(v) ? "13 桁か 10 桁の ISBN を入れてください"
+        : "検査数字が合いません。打ち間違いを確かめてください";
+      if (ok && !state.busy) add.removeAttribute("disabled"); else add.setAttribute("disabled", "disabled");
     });
     function submit() {
       if (!isbnValid(input.value.trim())) return;
-      stage(book.asin, isbnDigits(input.value.trim()), book.title);
+      stage(book.asin, isbn13(input.value.trim()), book.title);
     }
     add.addEventListener("click", submit);
     input.addEventListener("keydown", function (e) { if (e.key === "Enter") submit(); });
     pane.appendChild(el("section", { class: "block" }, [
-      el("h3", { text: "ISBN を入力する" }),
+      el("h3", { id: "isbn-heading", text: "ISBN を入力する" }),
       el("p", { class: "hint", text: "候補にない紙版は、調べた ISBN を入れてください。反映すると、その ISBN で NDL サーチを 1 回引きます。" }),
       el("div", { class: "isbn-form" }, [input, add, hint])
     ]));
@@ -574,7 +609,9 @@ footer.tray {
     showBanner(null);
     api("/api/apply", { method: "POST", body: JSON.stringify({ changes: changes }) })
       .then(function (data) {
-        state.staged = {};
+        asins.forEach(function (a) {
+          if (state.staged[a] && state.staged[a].isbn === changes[a]) delete state.staged[a];
+        });
         var box = document.getElementById("results");
         box.replaceChildren();
         box.hidden = false;
@@ -597,22 +634,30 @@ footer.tray {
           ]));
         });
         if (data.failed) {
-          box.appendChild(el("p", { class: "hint bad", text: data.failed + " 冊は NDL サーチから取得できませんでした。もう一度反映すると引き直します。" }));
+          box.appendChild(el("p", {
+            class: "hint bad",
+            text: data.failed + " 冊は NDL サーチから取得できませんでした。端末で kindb enrich を実行すると引き直します。"
+          }));
         }
         if (data.aborted || data.interrupted) {
-          box.appendChild(el("p", { class: "hint bad", text: "途中で止まりました。残りは次に反映するときに引き直します。" }));
+          box.appendChild(el("p", {
+            class: "hint bad",
+            text: "途中で止まりました。残りの本は、端末で kindb enrich を実行すると引き直します。"
+          }));
         }
       })
       .catch(function (e) { showBanner("反映できませんでした: " + e.message); })
       .then(function () {
         state.busy = false;
         busy.hidden = true;
+        renderTray();
         return loadState();
       })
       .then(function () {
         loadBooks();
         if (state.selected) selectBook(state.selected);
-      });
+      })
+      .catch(function (e) { showBanner(e.message); });
   }
 
   // --- 起動 ---

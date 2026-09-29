@@ -75,10 +75,6 @@ def _add_column(table: Table, name: str, **kwargs: object) -> None:
     table.add_column(name, overflow="fold", **kwargs)
 
 
-def _escape_like(term: str) -> str:
-    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 def _require_db(db: str | None) -> Path:
     db_path = get_db_path(db)
     if not db_path.exists():
@@ -243,7 +239,7 @@ def search(
 
     con = connect(db_path, read_only=True)
     try:
-        like = f"%{_escape_like(term)}%"
+        like = f"%{sqlguard.escape_like(term)}%"
         params: list = [like, like, like, like, like]
         # 件名は表に出さない。列を足すと 80 桁の表で書名がさらに細く折り返されるため
         where = r"""FROM v_books

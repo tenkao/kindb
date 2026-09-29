@@ -11,6 +11,8 @@ import json
 import os
 import re
 import secrets
+import socket
+import stat
 import tempfile
 import traceback
 from contextlib import closing
@@ -23,6 +25,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import duckdb
 
+from kindb import sqlguard
 from kindb.db import DatabaseLockedError, connect
 from kindb.enrich import EnrichLockedError, FetchResult, Reporter, Target, load_overrides_csv, run_enrich
 from kindb.matching import isbn_checksum_ok, normalize_isbn
@@ -67,6 +70,8 @@ def load_current_overrides(csv_path: Path, db_path: Path) -> dict[str, str | Non
 
 def write_overrides_csv(path: Path, overrides: dict[str, str | None]) -> None:
     """訂正の CSV を書く。途中で失敗しても元の CSV が壊れないよう、一時ファイルに書いてから置き換える。"""
+    # シンボリックリンクなら実体を書き換える。リンクのまま置き換えると、リンクが通常のファイルになり実体は古いまま残る
+    path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
@@ -75,6 +80,13 @@ def write_overrides_csv(path: Path, overrides: dict[str, str | None]) -> None:
             writer.writerow(["asin", "isbn"])
             for asin, isbn in overrides.items():
                 writer.writerow([asin, isbn or ""])
+        # mkstemp は 0600 で作るので、元のファイルの権限を引き継ぐ。新しく作るときは umask に従う通常の権限にする
+        if path.exists():
+            os.chmod(tmp, stat.S_IMODE(path.stat().st_mode))
+        else:
+            umask = os.umask(0)
+            os.umask(umask)
+            os.chmod(tmp, 0o666 & ~umask)
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
@@ -103,8 +115,8 @@ def list_books(
     elif view != "all":
         raise ValueError(f"Unknown view: {view}")
     if query.strip():
-        like = f"%{query.strip()}%"
-        conditions.append("(title ILIKE ? OR authors_text ILIKE ? OR asin = ?)")
+        like = f"%{sqlguard.escape_like(query.strip())}%"
+        conditions.append("(title ILIKE ? ESCAPE '\\' OR authors_text ILIKE ? ESCAPE '\\' OR asin = ?)")
         params += [like, like, query.strip()]
     where = " AND ".join(conditions) or "TRUE"
     with closing(connect(db_path, read_only=True)) as con:
@@ -155,7 +167,8 @@ def book_detail(db_path: Path, asin: str, overrides: dict[str, str | None]) -> d
     candidates = []
     for (xml,) in items:
         record = parse_item(xml)
-        isbns = [i for i in (normalize_isbn(x) for x in record.isbns) if i]
+        # 13 桁にした値で検査数字を確かめる。反映は検査数字の合わない ISBN を断るので、その候補は選べないと示す
+        isbns = [{"isbn": i, "valid": isbn_checksum_ok(i)} for i in (normalize_isbn(x) for x in record.isbns) if i]
         candidates.append(
             {
                 "id": record.id,
@@ -225,7 +238,7 @@ def apply_changes(
         raise ValueError("changes must be an object of ASIN to ISBN")
     normalized: dict[str, str | None] = {}
     for asin, isbn in changes.items():
-        if not isinstance(asin, str) or not _ASIN.match(asin):
+        if not isinstance(asin, str) or not _ASIN.fullmatch(asin):
             raise ValueError(f"Invalid ASIN: {asin!r}")
         if isbn is None:
             normalized[asin] = None
@@ -249,6 +262,7 @@ def apply_changes(
             overrides.pop(asin, None)
         else:
             overrides[asin] = isbn
+    original = csv_path.read_bytes() if csv_path.exists() else None
     write_overrides_csv(csv_path, overrides)
 
     with closing(connect(db_path, read_only=True)) as con:
@@ -257,16 +271,28 @@ def apply_changes(
     if not changed:
         return result
     # 手で CSV に書いた ASIN が英数字でなくても訂正としては保存する。引き直しの対象の SQL にだけ入れない
-    in_scope = [a for a in changed if _ASIN.match(a)]
+    in_scope = [a for a in changed if _ASIN.fullmatch(a)]
     where = "asin IN ({})".format(", ".join(f"'{a}'" for a in in_scope)) if in_scope else "FALSE"
     reporter = _CollectingReporter()
-    summary = run_enrich(db_path, client_factory(), where=where, overrides_path=csv_path, reporter=reporter)
+    try:
+        summary = run_enrich(db_path, client_factory(), where=where, overrides_path=csv_path, reporter=reporter)
+    except EnrichLockedError:
+        # 別の enrich か rematch が動いていて、訂正を DB に入れる前に断られた。CSV だけが先に進まないよう戻す
+        _restore(csv_path, original)
+        raise
     result.results = reporter.results
     result.fetched = summary.fetched
     result.failed = summary.counts.get("error", 0)
     result.aborted = summary.aborted
     result.interrupted = summary.interrupted
     return result
+
+
+def _restore(path: Path, original: bytes | None) -> None:
+    if original is None:
+        path.resolve().unlink(missing_ok=True)
+    else:
+        path.resolve().write_bytes(original)
 
 
 class FixServer(HTTPServer):
@@ -286,6 +312,17 @@ class FixServer(HTTPServer):
         # 他のサイトのページから API を呼ばれないよう、ページに埋めたこの値をヘッダで求める
         self.token = secrets.token_urlsafe(24)
 
+    def server_bind(self) -> None:
+        port = self.server_address[1]
+        if port:
+            # HTTPServer は SO_REUSEADDR を付けるので、同じ番号を 0.0.0.0 で待ち受ける他のサービスがあっても
+            # 127.0.0.1 に bind でき、そのサービスへのループバックの接続を横取りする。
+            # 同じ番号のワイルドカードに bind できるかを先に試す
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                probe.bind(("0.0.0.0", port))
+        super().server_bind()
+
     @property
     def port(self) -> int:
         return self.server_address[1]
@@ -301,6 +338,8 @@ def _page() -> str:
 
 class _Handler(BaseHTTPRequestHandler):
     server: FixServer
+    # 要求を 1 本ずつ処理するので、何も送らない接続が 1 本あるだけで他の要求がすべて止まらないよう、待ちを区切る
+    timeout = 10
 
     def log_message(self, format: str, *args: object) -> None:
         # 要求ごとのアクセスログは出さない。反映の結果はページに出る
@@ -398,6 +437,9 @@ class _Handler(BaseHTTPRequestHandler):
             body = self._read_json()
             result = apply_changes(server.db_path, server.csv_path, body.get("changes"), server.client_factory)
             self._json(HTTPStatus.OK, result.to_json())
+            if result.interrupted:
+                # 反映中の Ctrl-C は run_enrich が受け止めて結果を返す。結果を返してから、サーバも止める
+                raise KeyboardInterrupt
         else:
             self._error(HTTPStatus.NOT_FOUND, "Not found.")
 
