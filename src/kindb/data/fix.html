@@ -123,6 +123,7 @@ main { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; min-heigh
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 10px 0 0; font-size: 13px; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
+.facts a { color: var(--accent); }
 
 section.block { margin-top: 24px; display: grid; gap: 10px; }
 section.block h3 { margin: 0; font-size: 14px; }
@@ -434,6 +435,11 @@ footer.tray {
       facts.appendChild(el("dd", { class: mono ? "mono" : "", text: String(value) }));
     }
     fact("ASIN", book.asin, true);
+    var amazon = "https://www.amazon.co.jp/dp/" + encodeURIComponent(book.asin);
+    facts.appendChild(el("dt", { text: "Amazon" }));
+    facts.appendChild(el("dd", {}, [
+      el("a", { href: amazon, target: "_blank", rel: "noopener noreferrer", text: amazon })
+    ]));
     fact("著者", book.authors);
     fact("シリーズ", book.series_title);
     fact("購入日", book.acquired_at ? book.acquired_at.slice(0, 10) : null);
