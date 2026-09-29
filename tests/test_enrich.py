@@ -731,6 +731,20 @@ def test_adding_or_changing_an_isbn_override_clears_the_old_bibliographic_data(
     assert _rows(library, "SELECT bib_match, subjects FROM v_books WHERE asin = ?", [TSUGE]) == [(None, [])]
 
 
+def test_resumed_refresh_fetches_a_refetched_book_whose_override_changed(library: Path, tmp_path: Path) -> None:
+    run_enrich(library, _standard_ndl().client())
+    run_enrich(library, _standard_ndl().client(), refresh=True, limit=1)  # HIMO を引き直して打ち切る
+
+    isbn_item = item_xml("R100000002-I000009999999", "理想のヒモ生活", volume="3", isbn="978-4-478-46037-5")
+    ndl = _standard_ndl()
+    ndl.add({"isbn": "9784478460375"}, rss([isbn_item]))
+    summary = run_enrich(library, ndl.client(), refresh=True,
+                         overrides_path=_write_overrides(tmp_path, f"{HIMO},9784478460375\n"))
+    assert summary.resumed_from is not None
+    assert {"isbn": "9784478460375"} in ndl.calls
+    assert _rows(library, "SELECT method FROM bib_matches WHERE asin = ?", [HIMO]) == [("isbn",)]
+
+
 def _himo_over_limit() -> list[tuple[dict[str, str], str]]:
     # どの段も、絞り直しても 500 件を超えたままの本(保留になる)
     return [

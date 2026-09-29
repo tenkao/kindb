@@ -152,6 +152,8 @@ def apply_overrides(
         # 取った候補から採用し直さないよう、候補まで消す
         for table in _BIB_TABLES:
             con.execute(f"DELETE FROM {table} WHERE asin = ?", [asin])
+        # 中断した引き直しで引き直し済みでも、未取得に戻したので、再開した回で訂正の ISBN で引く
+        con.execute("DELETE FROM bib_refetch_done WHERE asin = ?", [asin])
         if after is None:
             con.execute(
                 "INSERT INTO bib_fetches (asin, status, fetched_at) VALUES (?, ?, ?)",
