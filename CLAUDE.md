@@ -20,6 +20,7 @@ kindb は、Chrome 拡張で取得した `kindle.json`(主データ)と、任意
 - `src/kindb/ndl.py`: NDL サーチ OpenSearch の呼び出し(間隔、429)と RSS の解析。標準ライブラリだけで書く。
 - `src/kindb/matching.py`: 書名の正規化と照合の規則。通信も DB も扱わない純粋関数。
 - `src/kindb/enrich.py`: `run_enrich()` / `run_rematch()`。対象の選択、手動訂正、取得の進行、まとめた書き込み。
+- `src/kindb/fixui.py` / `src/kindb/data/fix.html`: `kindb fix` の手動訂正の Web UI。127.0.0.1 だけで待ち受け、訂正の CSV を書いて `run_enrich()` で反映する。標準ライブラリだけで書く。
 - `scripts/build_ndc_table.py`: 配布元の `ndc9.ttl` から NDC の分類名の TSV を作る。
 - `tests/create_fixture.py` / `tests/create_official_fixture.py`: テストと手動確認で使う fixture の生成。期待値の件数はこの内容に依存する。
 - `tests/ndl_fixtures.py`: NDL の応答を組み立てる関数と、通信しない `FakeOpenSearch`。テストは NDL に通信しない。
@@ -29,7 +30,7 @@ kindb は、Chrome 拡張で取得した `kindle.json`(主データ)と、任意
 理由は `docs/spec.md` にある。
 
 - import は `create_schema()` → `BEGIN` → `DELETE`/`INSERT` → `COMMIT` → `CHECKPOINT` の順に実行する。
-- `kindb import` と `kindb import-official` は、それぞれ自分の担当テーブルだけを書き換え、`bib_*` に触れない。`bib_*` を書くのは `enrich` と `rematch` だけで、手動訂正を変えられるのは `enrich` だけ。
+- `kindb import` と `kindb import-official` は、それぞれ自分の担当テーブルだけを書き換え、`bib_*` に触れない。`bib_*` を書くのは `enrich` と `rematch` だけで、手動訂正を変えられるのは `enrich` だけ。`fix` の反映は `run_enrich()` を呼ぶので、この経路に含まれる。
 - `enrich` は取得中に DB を開かない。一定冊数ごとに、import と同じ順で対象 ASIN の `bib_*` 行だけを置き換える。
 - `enrich` と `rematch` は DB ごとに 1 つだけ動く(`<db>.enrich.lock` の flock)。`delete` はこのファイルも消す。
 - 照合は精度を優先する。誤った書誌情報を付けるより何も付けない。規則を緩めるときは、標本での誤照合が増えないことを確かめる。

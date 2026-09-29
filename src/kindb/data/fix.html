@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="kindb-token" content="__KINDB_TOKEN__">
+<title>kindb 手動訂正</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f4f5f1;
+  --surface: #fcfcfa;
+  --surface-2: #eceee8;
+  --ink: #1b2230;
+  --muted: #5a6474;
+  --line: #d6dbd9;
+  --accent: #1d6f63;
+  --accent-ink: #fcfcfa;
+  --accent-soft: #d9ebe6;
+  --good: #2f7d3b;
+  --good-soft: #dcecd9;
+  --warn: #93650f;
+  --warn-soft: #f3e6c8;
+  --bad: #b2402b;
+  --bad-soft: #f5dcd4;
+  --font: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", system-ui, sans-serif;
+  --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #10151c;
+    --surface: #171e27;
+    --surface-2: #1e2732;
+    --ink: #e4e8ee;
+    --muted: #9aa3b4;
+    --line: #2c3542;
+    --accent: #5cc2ae;
+    --accent-ink: #10151c;
+    --accent-soft: #173a35;
+    --good: #7fcb8a;
+    --good-soft: #1d3322;
+    --warn: #e2b45c;
+    --warn-soft: #3a2f16;
+    --bad: #f08a73;
+    --bad-soft: #3d211b;
+  }
+}
+* { box-sizing: border-box; }
+/* display を指定した要素でも hidden 属性で隠れるようにする */
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font);
+  font-size: 14px; line-height: 1.6;
+}
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: 0.5; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mono { font-family: var(--mono); font-size: 0.92em; font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+
+.app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
+
+header.bar {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px;
+  padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--surface);
+}
+header.bar h1 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: 0.02em; }
+header.bar .paths { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); min-width: 0; }
+header.bar .paths span { overflow-wrap: anywhere; }
+.notice {
+  grid-column: 1 / -1; margin: 0; padding: 8px 20px; font-size: 13px;
+  background: var(--warn-soft); color: var(--warn); border-bottom: 1px solid var(--line);
+}
+.error-banner { background: var(--bad-soft); color: var(--bad); }
+
+main { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; min-height: 0; }
+
+/* 一覧 */
+.list-pane { display: grid; grid-template-rows: auto auto 1fr; border-right: 1px solid var(--line); min-height: 0; }
+.filters { display: flex; gap: 6px; padding: 12px 16px 8px; }
+.tab {
+  border: 1px solid var(--line); background: transparent; border-radius: 999px; padding: 3px 12px; font-size: 13px;
+  color: var(--muted);
+}
+.tab[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.search { padding: 0 16px 10px; display: grid; gap: 4px; }
+.search input {
+  width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
+}
+.search .count { font-size: 12px; color: var(--muted); }
+.books { list-style: none; margin: 0; padding: 0 8px 16px; overflow-y: auto; }
+.book-item {
+  display: grid; gap: 3px; width: 100%; text-align: left; padding: 8px 10px; border: 0; border-radius: 6px;
+  background: transparent;
+}
+.book-item:hover { background: var(--surface-2); }
+.book-item[aria-current="true"] { background: var(--accent-soft); }
+.book-item .t { font-size: 13.5px; overflow-wrap: anywhere; }
+.book-item .meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+
+.chip {
+  display: inline-block; font-size: 11.5px; padding: 0 7px; border-radius: 4px; line-height: 1.7;
+  background: var(--surface-2); color: var(--muted); white-space: nowrap;
+}
+.chip.good { background: var(--good-soft); color: var(--good); }
+.chip.warn { background: var(--warn-soft); color: var(--warn); }
+.chip.bad { background: var(--bad-soft); color: var(--bad); }
+.chip.accent { background: var(--accent-soft); color: var(--accent); }
+
+/* 詳細 */
+.detail-pane { overflow-y: auto; padding: 20px 24px 32px; min-height: 0; }
+.placeholder { color: var(--muted); margin-top: 40px; text-align: center; }
+.book-head { display: grid; grid-template-columns: auto 1fr; gap: 16px; align-items: start; }
+.book-head img { width: 72px; border-radius: 3px; border: 1px solid var(--line); background: var(--surface-2); }
+.book-head h2 { margin: 0 0 4px; font-size: 18px; line-height: 1.45; text-wrap: balance; overflow-wrap: anywhere; }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 10px 0 0; font-size: 13px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+
+section.block { margin-top: 24px; display: grid; gap: 10px; }
+section.block h3 { margin: 0; font-size: 14px; }
+section.block p { margin: 0; max-width: 70ch; }
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; font-weight: 500; color: var(--muted); background: var(--surface-2); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+tr.matched td { background: var(--accent-soft); }
+td a { color: var(--accent); }
+td.nowrap { white-space: nowrap; }
+
+.btn {
+  border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink);
+  border-radius: 6px; padding: 4px 12px; font-size: 13px; white-space: nowrap;
+}
+.btn.ghost { background: transparent; color: var(--accent); }
+.btn.danger { background: transparent; color: var(--bad); border-color: var(--bad); }
+
+.isbn-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.isbn-form input {
+  width: 18ch; padding: 5px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
+  font-family: var(--mono);
+}
+.isbn-form input[aria-invalid="true"] { border-color: var(--bad); }
+.hint { font-size: 12.5px; color: var(--muted); }
+.hint.bad { color: var(--bad); }
+.override-box {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 12px;
+  border: 1px solid var(--warn); border-radius: 8px; background: var(--warn-soft); color: var(--warn);
+}
+
+/* 反映待ち */
+footer.tray {
+  border-top: 1px solid var(--line); background: var(--surface); padding: 12px 20px;
+  display: grid; gap: 8px; max-height: 45vh; overflow-y: auto;
+}
+.tray-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.tray-head h2 { margin: 0; font-size: 14px; }
+.staged { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.staged li { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; font-size: 13px; }
+.staged li .t { overflow-wrap: anywhere; }
+.x { border: 0; background: transparent; color: var(--muted); font-size: 16px; line-height: 1; padding: 2px 6px; }
+.results { display: grid; gap: 4px; font-size: 13px; }
+.results .row { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
+.busy { color: var(--accent); font-size: 13px; }
+
+@media (max-width: 800px) {
+  main { grid-template-columns: 1fr; grid-template-rows: minmax(220px, 40vh) auto; }
+  .list-pane { border-right: 0; border-bottom: 1px solid var(--line); }
+  .detail-pane { padding: 16px; }
+  header.bar, footer.tray, .notice { padding-inline: 16px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <h1>kindb 手動訂正</h1>
+    <div class="paths">
+      <span>DB: <span class="mono" id="db-path">…</span></span>
+      <span>訂正の CSV: <span class="mono" id="csv-path">…</span></span>
+    </div>
+  </header>
+
+  <main>
+    <div class="list-pane">
+      <div class="filters" role="group" aria-label="表示する本">
+        <button type="button" class="tab" id="view-review" aria-pressed="true">要確認</button>
+        <button type="button" class="tab" id="view-all" aria-pressed="false">すべて</button>
+      </div>
+      <div class="search">
+        <input type="search" id="q" placeholder="書名、著者、ASIN で絞る" aria-label="書名、著者、ASIN で絞る">
+        <span class="count" id="count"></span>
+      </div>
+      <ul class="books" id="books" aria-label="本の一覧"></ul>
+    </div>
+    <div class="detail-pane" id="detail" aria-live="polite">
+      <p class="placeholder">左の一覧から本を選んでください。</p>
+    </div>
+  </main>
+
+  <footer class="tray" id="tray" hidden>
+    <div class="tray-head">
+      <h2 id="tray-title">反映待ち</h2>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <span class="busy" id="busy" hidden></span>
+        <button type="button" class="btn" id="apply">反映する</button>
+      </div>
+    </div>
+    <p class="hint" id="tray-summary"></p>
+    <ul class="staged" id="staged"></ul>
+    <div class="results" id="results" hidden></div>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var TOKEN = document.querySelector('meta[name="kindb-token"]').content;
+  var STATUS = {
+    not_found: ["見つからない", "bad"],
+    incomplete: ["保留", "warn"],
+    excluded: ["除外", ""],
+    error: ["通信失敗", "bad"],
+    found: ["見つかった", "good"]
+  };
+  var MATCH = {
+    edition: ["紙版を特定", "good"],
+    work: ["作品だけ", "warn"],
+    isbn: ["ISBN で指定", "accent"]
+  };
+
+  var state = {
+    view: "review",
+    q: "",
+    selected: null,
+    detail: null,
+    overrides: {},
+    pending: [],
+    staged: {},   // asin -> {isbn: string|null, title: string}
+    busy: false
+  };
+
+  // --- 通信 ---
+  function api(path, options) {
+    options = options || {};
+    var headers = { "X-Kindb-Token": TOKEN };
+    if (options.body) headers["Content-Type"] = "application/json";
+    return fetch(path, { method: options.method || "GET", headers: headers, body: options.body })
+      .then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (data) {
+          if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+          return data;
+        });
+      });
+  }
+
+  // --- 部品 ---
+  function el(tag, attrs, children) {
+    var node = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) {
+      if (k === "class") node.className = attrs[k];
+      else if (k === "text") node.textContent = attrs[k];
+      else if (k.slice(0, 2) === "on") node.addEventListener(k.slice(2), attrs[k]);
+      else if (attrs[k] !== null && attrs[k] !== undefined && attrs[k] !== false) node.setAttribute(k, attrs[k]);
+    });
+    (children || []).forEach(function (c) {
+      if (c === null || c === undefined) return;
+      node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+    });
+    return node;
+  }
+  function chip(label, kind) { return el("span", { class: "chip " + (kind || ""), text: label }); }
+
+  function statusChips(book) {
+    var chips = [];
+    if (book.status === null || book.status === undefined) chips.push(chip("未取得"));
+    else if (book.status === "found" && !book.match) chips.push(chip("照合なし", "warn"));
+    else if (book.status === "found") {
+      var m = MATCH[book.match] || [book.match, ""];
+      chips.push(chip(m[0], m[1]));
+    } else {
+      var s = STATUS[book.status] || [book.status, ""];
+      chips.push(chip(s[0], s[1]));
+    }
+    if (book.override) chips.push(chip(book.override.excluded ? "訂正: 除外" : "訂正あり", "accent"));
+    if (state.staged[book.asin]) chips.push(chip("反映待ち", "accent"));
+    return chips;
+  }
+
+  function showBanner(message) {
+    var old = document.getElementById("banner");
+    if (old) old.remove();
+    if (!message) return;
+    var banner = el("p", { class: "notice error-banner", id: "banner", role: "alert", text: message });
+    document.querySelector("header.bar").after(banner);
+  }
+
+  // --- ISBN の検査数字(サーバでも同じ検査をする) ---
+  function isbnDigits(raw) { return raw.replace(/[\s-]/g, "").toUpperCase(); }
+  function isbnValid(raw) {
+    var s = isbnDigits(raw), i, sum = 0;
+    if (/^\d{13}$/.test(s)) {
+      for (i = 0; i < 12; i++) sum += Number(s[i]) * (i % 2 ? 3 : 1);
+      return (10 - (sum % 10)) % 10 === Number(s[12]);
+    }
+    if (/^\d{9}[\dX]$/.test(s)) {
+      for (i = 0; i < 9; i++) sum += Number(s[i]) * (10 - i);
+      var check = (11 - (sum % 11)) % 11;
+      return (check === 10 ? "X" : String(check)) === s[9];
+    }
+    return false;
+  }
+
+  // --- 状態 ---
+  function loadState() {
+    return api("/api/state").then(function (data) {
+      state.overrides = data.overrides;
+      state.pending = data.pending;
+      document.getElementById("db-path").textContent = data.db;
+      document.getElementById("csv-path").textContent =
+        data.overrides_path + (data.overrides_exists ? "" : "(まだない。反映すると作る)");
+      renderTray();
+    });
+  }
+
+  // --- 一覧 ---
+  var searchTimer = null;
+  function loadBooks() {
+    var params = new URLSearchParams({ view: state.view, q: state.q });
+    return api("/api/books?" + params).then(function (data) {
+      var list = document.getElementById("books");
+      list.replaceChildren();
+      data.books.forEach(function (book) {
+        var item = el("button", {
+          type: "button", class: "book-item",
+          "aria-current": book.asin === state.selected ? "true" : "false",
+          onclick: function () { selectBook(book.asin); }
+        }, [
+          el("span", { class: "t", text: book.title }),
+          el("span", { class: "meta" }, statusChips(book).concat([
+            el("span", { class: "mono muted", text: book.asin })
+          ]))
+        ]);
+        list.appendChild(el("li", {}, [item]));
+      });
+      var shown = data.books.length;
+      document.getElementById("count").textContent =
+        shown < data.total ? data.total + " 冊のうち " + shown + " 冊を表示。書名で絞ってください" : data.total + " 冊";
+    }).catch(function (e) { showBanner(e.message); });
+  }
+
+  function setView(view) {
+    state.view = view;
+    document.getElementById("view-review").setAttribute("aria-pressed", String(view === "review"));
+    document.getElementById("view-all").setAttribute("aria-pressed", String(view === "all"));
+    loadBooks();
+  }
+
+  // --- 詳細 ---
+  function selectBook(asin) {
+    state.selected = asin;
+    document.querySelectorAll(".book-item").forEach(function (b) {
+      b.setAttribute("aria-current", "false");
+    });
+    return api("/api/books/" + encodeURIComponent(asin)).then(function (data) {
+      state.detail = data;
+      renderDetail();
+      loadBooks();
+    }).catch(function (e) { showBanner(e.message); });
+  }
+
+  function stage(asin, isbn, title) {
+    state.staged[asin] = { isbn: isbn, title: title };
+    renderTray();
+    renderDetail();
+    loadBooks();
+  }
+  function unstage(asin) {
+    delete state.staged[asin];
+    renderTray();
+    renderDetail();
+    loadBooks();
+  }
+
+  function renderDetail() {
+    var pane = document.getElementById("detail");
+    pane.replaceChildren();
+    if (!state.detail) {
+      pane.appendChild(el("p", { class: "placeholder", text: "左の一覧から本を選んでください。" }));
+      return;
+    }
+    var book = state.detail.book, cands = state.detail.candidates;
+    var facts = el("dl", { class: "facts" });
+    function fact(label, value, mono) {
+      if (value === null || value === undefined || value === "") return;
+      facts.appendChild(el("dt", { text: label }));
+      facts.appendChild(el("dd", { class: mono ? "mono" : "", text: String(value) }));
+    }
+    fact("ASIN", book.asin, true);
+    fact("著者", book.authors);
+    fact("シリーズ", book.series_title);
+    fact("購入日", book.acquired_at ? book.acquired_at.slice(0, 10) : null);
+    fact("今の ISBN", book.isbn, true);
+    fact("刊行", book.paper_issued);
+    fact("出版社", book.publisher);
+    fact("NDC", book.ndc ? book.ndc + (book.ndc_label ? " " + book.ndc_label : "") : null);
+
+    pane.appendChild(el("div", { class: "book-head" }, [
+      book.image ? el("img", { src: book.image, alt: "", referrerpolicy: "no-referrer", loading: "lazy" })
+                 : el("span"),
+      el("div", {}, [
+        el("h2", { text: book.title }),
+        el("div", { class: "meta", style: "display:flex;gap:4px;flex-wrap:wrap" }, statusChips(book)),
+        facts
+      ])
+    ]));
+
+    var staged = state.staged[book.asin];
+    if (staged) {
+      pane.appendChild(el("div", { class: "override-box", style: "margin-top:16px" }, [
+        el("span", { text: staged.isbn ? "反映待ち: ISBN " + staged.isbn + " にする" : "反映待ち: 訂正を取り消す" }),
+        el("button", { type: "button", class: "btn ghost", text: "やめる", onclick: function () { unstage(book.asin); } })
+      ]));
+    } else if (book.override) {
+      pane.appendChild(el("div", { class: "override-box", style: "margin-top:16px" }, [
+        el("span", {
+          text: book.override.excluded ? "訂正で照合を止めています(除外)"
+                                       : "訂正で ISBN " + book.override.isbn + " を指定しています"
+        }),
+        el("button", {
+          type: "button", class: "btn danger", text: "訂正を取り消す",
+          title: "CSV から行を消し、書名で引き直します",
+          onclick: function () { stage(book.asin, null, book.title); }
+        })
+      ]));
+    }
+
+    // 候補
+    var candBlock = el("section", { class: "block" }, [el("h3", { text: "保存済みの候補(" + cands.length + " 件)" })]);
+    if (!cands.length) {
+      candBlock.appendChild(el("p", {
+        class: "hint",
+        text: book.status === "not_found" || book.status === "incomplete"
+          ? "見つからなかった本は候補を保存していません。下で ISBN を入力してください。"
+          : "候補はありません。"
+      }));
+    } else {
+      var tbody = el("tbody");
+      cands.forEach(function (c) {
+        var pick;
+        if (!c.isbns.length) {
+          pick = el("span", { class: "hint", text: "ISBN なし" });
+        } else {
+          pick = el("div", { style: "display:grid;gap:4px" }, c.isbns.map(function (isbn) {
+            return el("button", {
+              type: "button", class: "btn ghost",
+              text: c.isbns.length > 1 ? "選ぶ " + isbn : "これにする",
+              disabled: staged && staged.isbn === isbn ? "disabled" : null,
+              onclick: function () { stage(book.asin, isbn, book.title); }
+            });
+          }));
+        }
+        var titleCell = el("td", {}, [
+          el("a", { href: c.link, target: "_blank", rel: "noopener noreferrer", text: c.title }),
+          c.matched ? el("div", {}, [chip("今の照合", "accent")]) : null
+        ]);
+        tbody.appendChild(el("tr", { class: c.matched ? "matched" : "" }, [
+          titleCell,
+          el("td", { class: "nowrap", text: c.volume || "" }),
+          el("td", { text: c.edition || "" }),
+          el("td", { text: c.series.join(" / ") }),
+          el("td", { text: c.publishers.join(", ") }),
+          el("td", { class: "nowrap mono", text: c.issued || "" }),
+          el("td", { class: "nowrap", text: c.extent || "" }),
+          el("td", { class: "nowrap mono", text: c.isbns.join("\n") }),
+          el("td", {}, [pick])
+        ]));
+      });
+      var head = el("tr", {}, ["書名", "巻", "版", "叢書", "出版社", "刊行", "ページ", "ISBN", ""].map(function (h) {
+        return el("th", { text: h });
+      }));
+      candBlock.appendChild(el("div", { class: "table-wrap" }, [
+        el("table", {}, [el("thead", {}, [head]), tbody])
+      ]));
+      candBlock.appendChild(el("p", { class: "hint", text: "書名は NDL サーチの書誌へのリンクです。" }));
+    }
+    pane.appendChild(candBlock);
+
+    // ISBN の直接入力
+    var input = el("input", {
+      id: "isbn-input", inputmode: "numeric", autocomplete: "off", placeholder: "978…",
+      "aria-describedby": "isbn-hint"
+    });
+    var hint = el("span", { class: "hint", id: "isbn-hint", text: "ISBN-13 か ISBN-10(ハイフンは不要)" });
+    var add = el("button", { type: "button", class: "btn", text: "この ISBN にする", disabled: "disabled" });
+    input.addEventListener("input", function () {
+      var v = input.value.trim();
+      var ok = v !== "" && isbnValid(v);
+      input.setAttribute("aria-invalid", v !== "" && !ok ? "true" : "false");
+      hint.className = v !== "" && !ok ? "hint bad" : "hint";
+      hint.textContent = v === "" ? "ISBN-13 か ISBN-10(ハイフンは不要)"
+        : ok ? "検査数字は正しい形です" : "検査数字が合いません。打ち間違いを確かめてください";
+      if (ok) add.removeAttribute("disabled"); else add.setAttribute("disabled", "disabled");
+    });
+    function submit() {
+      if (!isbnValid(input.value.trim())) return;
+      stage(book.asin, isbnDigits(input.value.trim()), book.title);
+    }
+    add.addEventListener("click", submit);
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") submit(); });
+    pane.appendChild(el("section", { class: "block" }, [
+      el("h3", { text: "ISBN を入力する" }),
+      el("p", { class: "hint", text: "候補にない紙版は、調べた ISBN を入れてください。反映すると、その ISBN で NDL サーチを 1 回引きます。" }),
+      el("div", { class: "isbn-form" }, [input, add, hint])
+    ]));
+  }
+
+  // --- 反映待ち ---
+  function renderTray() {
+    var tray = document.getElementById("tray");
+    var asins = Object.keys(state.staged);
+    var extra = state.pending.filter(function (a) { return !state.staged[a]; });
+    var resultsShown = !document.getElementById("results").hidden;
+    tray.hidden = !asins.length && !extra.length && !resultsShown;
+    var list = document.getElementById("staged");
+    list.replaceChildren();
+    asins.forEach(function (asin) {
+      var s = state.staged[asin];
+      list.appendChild(el("li", {}, [
+        el("span", { class: "t", text: s.title }),
+        el("span", { class: "mono", text: s.isbn ? "ISBN " + s.isbn : "訂正を取り消す" }),
+        el("button", {
+          type: "button", class: "x", "aria-label": s.title + " の変更をやめる", text: "×",
+          onclick: function () { unstage(asin); }
+        })
+      ]));
+    });
+    var byIsbn = asins.filter(function (a) { return state.staged[a].isbn; }).length;
+    var removals = asins.length - byIsbn;
+    var parts = [];
+    if (byIsbn) parts.push("ISBN の指定 " + byIsbn + " 冊(NDL に " + byIsbn + " 回)");
+    if (removals) parts.push("訂正の取り消し " + removals + " 冊(書名で引き直し、1 冊あたり最大 6 回)");
+    if (extra.length) parts.push("CSV を直接書き換えた未反映の訂正 " + extra.length + " 冊も一緒に反映します");
+    document.getElementById("tray-title").textContent = asins.length ? "反映待ち " + asins.length + " 冊" : "反映待ち";
+    document.getElementById("tray-summary").textContent = parts.length
+      ? parts.join("。") + "。問い合わせは 3 秒以上の間隔で送ります。" : "";
+    document.getElementById("apply").disabled = state.busy || (!asins.length && !extra.length);
+  }
+
+  function statusLabel(r) {
+    if (r.status === "found") {
+      var m = MATCH[r.match] || [r.match || "照合なし", ""];
+      return m[0] + (r.isbn ? " " + r.isbn : "");
+    }
+    return (STATUS[r.status] || [r.status])[0] + (r.error ? "(" + r.error + ")" : "");
+  }
+
+  function apply() {
+    var asins = Object.keys(state.staged);
+    var changes = {};
+    asins.forEach(function (a) { changes[a] = state.staged[a].isbn; });
+    var requests = asins.length + state.pending.length;
+    state.busy = true;
+    renderTray();
+    var busy = document.getElementById("busy");
+    busy.hidden = false;
+    busy.textContent = "NDL サーチに問い合わせています(" + requests + " 冊、少なくとも " + (requests * 3) + " 秒)…";
+    showBanner(null);
+    api("/api/apply", { method: "POST", body: JSON.stringify({ changes: changes }) })
+      .then(function (data) {
+        state.staged = {};
+        var box = document.getElementById("results");
+        box.replaceChildren();
+        box.hidden = false;
+        var head = data.changed.length
+          ? "反映しました。引き直した本: " + data.fetched + " 冊"
+          : "CSV を保存しました。DB の訂正はすでに同じ内容でした";
+        box.appendChild(el("div", { class: "row" }, [
+          el("strong", { text: head }),
+          el("button", {
+            type: "button", class: "btn ghost", text: "閉じる",
+            onclick: function () { box.hidden = true; renderTray(); }
+          })
+        ]));
+        data.results.forEach(function (r) {
+          var label = statusLabel(r);
+          if (r.status === "not_found" && changes[r.asin]) label += "(この ISBN の紙版が NDL サーチにない)";
+          box.appendChild(el("div", { class: "row" }, [
+            el("span", { text: r.title }),
+            el("span", { class: "mono", text: label })
+          ]));
+        });
+        if (data.failed) {
+          box.appendChild(el("p", { class: "hint bad", text: data.failed + " 冊は NDL サーチから取得できませんでした。もう一度反映すると引き直します。" }));
+        }
+        if (data.aborted || data.interrupted) {
+          box.appendChild(el("p", { class: "hint bad", text: "途中で止まりました。残りは次に反映するときに引き直します。" }));
+        }
+      })
+      .catch(function (e) { showBanner("反映できませんでした: " + e.message); })
+      .then(function () {
+        state.busy = false;
+        busy.hidden = true;
+        return loadState();
+      })
+      .then(function () {
+        loadBooks();
+        if (state.selected) selectBook(state.selected);
+      });
+  }
+
+  // --- 起動 ---
+  document.getElementById("view-review").addEventListener("click", function () { setView("review"); });
+  document.getElementById("view-all").addEventListener("click", function () { setView("all"); });
+  document.getElementById("q").addEventListener("input", function (e) {
+    state.q = e.target.value;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(loadBooks, 250);
+  });
+  document.getElementById("apply").addEventListener("click", apply);
+  window.addEventListener("beforeunload", function (e) {
+    if (Object.keys(state.staged).length) { e.preventDefault(); e.returnValue = ""; }
+  });
+
+  loadState().then(loadBooks).catch(function (e) { showBanner(e.message); });
+})();
+</script>
+</body>
+</html>

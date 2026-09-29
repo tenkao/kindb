@@ -79,6 +79,7 @@ kindb status                        # 取得の状態ごとの冊数(Bib ...)
 - `--retry-missing` と `--refresh` は、未取得の本も対象に含む(既定の実行の対象に足す形)。見つからなかった本だけを引き直すなら `--retry-missing --where "bib_status IN ('not_found', 'incomplete')"` のように `--where` で絞る。絞らないと、未取得の本がすべて対象になり数時間かかる。
 - 照合を誤った本や、見つからなかった大事な本は、`asin,isbn` の見出しを持つ CSV を `kindb enrich --overrides <csv>` で渡して訂正する。ISBN を指定した本は書名でなく ISBN で引き、ISBN を空にした本は照合しない。CSV は前回の訂正を全件置き換える。
 - `kindb rematch` は、保存済みの候補から照合だけをやり直す(通信しない)。
+- `kindb fix` は、訂正をブラウザで行う画面を開く(127.0.0.1 だけで待ち受ける)。要確認の本の一覧から本を選び、保存済みの候補の紙版を選ぶか ISBN を入力して、まとめて反映する。反映は `enrich --overrides` と同じ処理で、訂正を変えた本だけを NDL サーチで引き直す(ISBN の指定は 1 冊 1 回)。編集する CSV は `--overrides` で指定でき、指定がなければ前回 `enrich` に渡した CSV を使う。
 
 NDL サーチには、蔵書の書名、先頭の著者名、訂正で指定した ISBN を送る。1 冊ずつの問い合わせでも、全体としては蔵書の一覧に近い情報が送られる。規則と状態の詳細は [`docs/spec.md`](docs/spec.md) の「書誌情報」を参照。
 

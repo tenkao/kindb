@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import json
 import math
+import webbrowser
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -16,6 +17,7 @@ from rich.text import Text
 from kindb import sqlguard
 from kindb.db import DatabaseLockedError, connect, enrich_lock_path, ensure_schema, get_db_path, wal_path
 from kindb.enrich import EnrichLockedError, FetchResult, Reporter, Target, run_enrich, run_rematch
+from kindb.fixui import FixServer, load_current_overrides, resolve_overrides_path
 from kindb.importer import import_kindle_json, import_official_zip
 from kindb.ndl import DEFAULT_INTERVAL, NdlClient
 
@@ -499,6 +501,41 @@ def rematch(db: Optional[str] = _db_option()) -> None:
     console.print(
         f"Rematched {summary.books} books: {summary.changed} changed, {summary.lost} without a match."
     )
+
+
+@app.command()
+@_report_locked_db
+def fix(
+    db: Optional[str] = _db_option(),
+    overrides: Optional[str] = typer.Option(
+        None,
+        "--overrides",
+        help="Overrides CSV to edit (default: the one enrich last used, else overrides.csv next to the database)",
+    ),
+    port: int = typer.Option(0, "--port", min=0, max=65535, help="Port on 127.0.0.1 (0 = any free port)"),
+    no_browser: bool = typer.Option(False, "--no-browser", help="Print the URL without opening a browser"),
+) -> None:
+    """Open a local web page to fix bibliographic matches by hand."""
+    db_path = _require_db(db)
+    csv_path = resolve_overrides_path(db_path, overrides)
+    try:
+        # 壊れた CSV を UI で上書きして手書きの行を失わないよう、起動時に読めることを確かめる
+        load_current_overrides(csv_path, db_path)
+        server = FixServer(("127.0.0.1", port), db_path, csv_path, lambda: _ndl_client(DEFAULT_INTERVAL))
+    except (ValueError, OSError) as e:
+        _print_error(str(e))
+        raise typer.Exit(1)
+    console.print(f"Serving the fix page at {server.url}", soft_wrap=True)
+    console.print(f"Overrides CSV: {csv_path}", soft_wrap=True)
+    console.print("Press Ctrl-C to stop.")
+    if not no_browser:
+        webbrowser.open(server.url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        console.print("Stopped.")
+    finally:
+        server.server_close()
 
 
 @app.command()

@@ -546,6 +546,38 @@ kindb query "SELECT count(*) AS n FROM bib_matches" --db "$BIB_DB"
 
 期待: 取り込み直しても `bib_matches` の件数は変わらない。
 
+## 8.6 手動訂正の画面(fix)
+
+8.5 の `$BIB_DB` を続けて使う。反映すると NDL サーチに問い合わせる(下の手順で 2〜7 回)。
+
+```bash
+kindb fix --db "$BIB_DB" --overrides /tmp/kindb_manual/overrides.csv
+```
+
+期待(起動):
+- `Serving the fix page at http://127.0.0.1:<port>/` と `Overrides CSV: /tmp/kindb_manual/overrides.csv` が出て、ブラウザが開く。
+- 画面の上に DB と CSV のパスが出る。「要確認」の一覧に、8.5 で訂正した `B000NOBOOK`(「ISBN で指定」「訂正あり」)と `B088GZFB9Z`(「除外」「訂正: 除外」)が出る。
+
+画面での操作:
+1. 「すべて」を押し、検索欄に `ヒモ` と入れて `B0GMYR661F` を選ぶ。保存済みの候補の表が出て、今の照合の行に「今の照合」が付く。書名は NDL サーチへのリンク。
+2. ISBN 欄に `9784822250851`(検査数字の誤り)を入れると、欄が赤くなり「検査数字が合いません」と出て、「この ISBN にする」を押せない。`9784822250850` に直すと押せる。押すと下に「反映待ち 1 冊」と「ISBN の指定 1 冊(NDL に 1 回)」が出る。
+3. `B000NOBOOK` を選び、「訂正を取り消す」を押す。反映待ちが 2 冊になり、「訂正の取り消し 1 冊(書名で引き直し…)」が加わる。
+4. 「反映する」を押す。問い合わせ中の表示のあと、「反映しました。引き直した本: 2 冊」と 1 冊ずつの結果が出る。`B0GMYR661F` は「ISBN で指定 9784822250850」、`B000NOBOOK` は「見つからない」。
+
+期待(反映のあと):
+
+```bash
+cat /tmp/kindb_manual/overrides.csv
+kindb query --table "SELECT asin, status, source FROM bib_fetches ORDER BY asin LIMIT 10" --db "$BIB_DB"
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:<port>/api/state
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: evil.example' http://127.0.0.1:<port>/
+```
+
+- CSV は `asin,isbn`、`B088GZFB9Z,`、`B0GMYR661F,9784822250850` の 3 行(`B000NOBOOK` の行は消えている)。
+- `bib_fetches` で `B0GMYR661F` は `found` で `source = isbn`、`B000NOBOOK` は `not_found` で `source = title`、`B088GZFB9Z` は `excluded` のまま。
+- トークンのない API の要求と、`Host` の違う要求は、どちらも `403`。
+- 端末で Ctrl-C を押すと `Stopped.` が出て終わる。
+
 ## 9. v0.2 DB マイグレーション
 
 新テーブル/view が無い DB を作って、読み取り CLI が自動で schema を更新することを確認する。
