@@ -120,6 +120,14 @@ main { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; min-heigh
 .book-head { display: grid; grid-template-columns: auto 1fr; gap: 16px; align-items: start; }
 .book-head img { width: 72px; border-radius: 3px; border: 1px solid var(--line); background: var(--surface-2); }
 .book-head h2 { margin: 0 0 4px; font-size: 18px; line-height: 1.45; text-wrap: balance; overflow-wrap: anywhere; }
+/* 次にすること: 本を選んで最初に読む指示なので、書誌の欄より目立たせる */
+.next {
+  margin: 10px 0 0; padding: 8px 12px; max-width: 70ch; font-size: 13.5px; font-weight: 600;
+  border-left: 3px solid var(--accent); border-radius: 4px; background: var(--accent-soft); color: var(--ink);
+}
+.next code {
+  padding: 0 4px; border-radius: 3px; background: var(--surface); font-weight: 400; overflow-wrap: anywhere;
+}
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 10px 0 0; font-size: 13px; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
@@ -198,6 +206,7 @@ footer.tray {
     <div class="list-pane">
       <div class="filters" role="group" aria-label="表示する本">
         <button type="button" class="tab" id="view-review" aria-pressed="true">要確認</button>
+        <button type="button" class="tab" id="view-corrected" aria-pressed="false">訂正済み</button>
         <button type="button" class="tab" id="view-all" aria-pressed="false">すべて</button>
       </div>
       <div class="search">
@@ -229,18 +238,20 @@ footer.tray {
 (function () {
   "use strict";
   var TOKEN = document.querySelector('meta[name="kindb-token"]').content;
-  var STATUS = {
-    not_found: ["見つからない", "bad"],
-    incomplete: ["保留", "warn"],
-    excluded: ["除外", ""],
-    error: ["取得失敗", "bad"],
-    found: ["見つかった", "good"]
-  };
-  var MATCH = {
+  // 状態の区分(サーバの label_of が決める)ごとの表示名と色
+  var LABELS = {
+    unfetched: ["未取得", ""],
     edition: ["紙版を特定", "good"],
     work: ["作品のみ特定", "warn"],
-    isbn: ["ISBN 指定", "accent"]
+    isbn: ["ISBN で特定", "accent"],
+    unmatched: ["照合なし", "warn"],
+    not_found: ["見つからない", "bad"],
+    not_in_ndl: ["NDL なし", ""],
+    incomplete: ["保留", "warn"],
+    excluded: ["除外", ""],
+    error: ["取得失敗", "bad"]
   };
+  var VIEWS = ["review", "corrected", "all"];
 
   var state = {
     view: "review",
@@ -284,20 +295,33 @@ footer.tray {
   }
   function chip(label, kind) { return el("span", { class: "chip " + (kind || ""), text: label }); }
 
+  function labelText(key) { return (LABELS[key] || [key])[0]; }
+
   function statusChips(book) {
-    var chips = [];
-    if (book.status === null || book.status === undefined) chips.push(chip("未取得"));
-    else if (book.status === "found" && !book.match) chips.push(chip("照合なし", "warn"));
-    else if (book.status === "found") {
-      var m = MATCH[book.match] || [book.match, ""];
-      chips.push(chip(m[0], m[1]));
-    } else {
-      var s = STATUS[book.status] || [book.status, ""];
-      chips.push(chip(s[0], s[1]));
-    }
-    if (book.override) chips.push(chip(book.override.excluded ? "訂正: 除外" : "訂正あり", "accent"));
-    if (state.staged[book.asin]) chips.push(chip("反映待ち", "accent"));
+    var l = LABELS[book.label] || [book.label, ""];
+    var chips = [chip(l[0], l[1])];
+    // 画面でためた変更と、CSV に手で書いた未反映の訂正は、どちらも反映すると変わるので同じ印にする
+    if (state.staged[book.asin] || book.pending) chips.push(chip("反映待ち", "accent"));
     return chips;
+  }
+
+  // 詳細の見出しの下に出す、次にすること。コマンドは、この本だけを引く形で示す(--where なしだと未取得の本をすべて引くため)
+  function nextStep(book) {
+    function cmd(args) {
+      return el("code", { class: "mono", text: "kindb enrich " + args + "--where \"asin = '" + book.asin + "'\"" });
+    }
+    switch (book.label) {
+      case "unfetched": return ["端末で ", cmd(""), " を実行すると取得します。"];
+      case "work": return ["作品は特定できましたが、紙版は定まっていません。下の候補から紙版を選ぶと特定できます。"];
+      case "unmatched": return ["照合の規則を更新した結果、どの候補にも照合していません。下の候補から紙版を選ぶか、端末で ",
+                                cmd("--refresh "), " を実行して再取得してください。"];
+      case "not_found": return ["紙版の ISBN が分かれば、下の欄に入力して訂正してください。"];
+      case "not_in_ndl": return ["指定した ISBN の紙版は NDL サーチにありません。ISBN が正しければ、このままで構いません。"];
+      case "incomplete": return ["検索結果が多すぎて確かめきれませんでした。再取得しても同じ結果になりやすいので、"
+                                 + "紙版の ISBN を下の欄に入力して訂正してください。"];
+      case "error": return ["NDL サーチから取得できませんでした。端末で ", cmd(""), " を実行すると再取得します。"];
+      default: return null;
+    }
   }
 
   function showBanner(message) {
@@ -346,7 +370,8 @@ footer.tray {
   var searchTimer = null;
   var listSeq = 0;
   function loadBooks() {
-    var params = new URLSearchParams({ view: state.view, q: state.q });
+    // 画面でためた変更はサーバが知らないので、要確認に足すよう ASIN を送る
+    var params = new URLSearchParams({ view: state.view, q: state.q, staged: Object.keys(state.staged).join(",") });
     var seq = ++listSeq;
     return api("/api/books?" + params).then(function (data) {
       if (seq !== listSeq) return;  // あとから送った要求の応答を、先に送った要求の応答で上書きしない
@@ -377,8 +402,9 @@ footer.tray {
 
   function setView(view) {
     state.view = view;
-    document.getElementById("view-review").setAttribute("aria-pressed", String(view === "review"));
-    document.getElementById("view-all").setAttribute("aria-pressed", String(view === "all"));
+    VIEWS.forEach(function (v) {
+      document.getElementById("view-" + v).setAttribute("aria-pressed", String(view === v));
+    });
     loadBooks();
   }
 
@@ -432,7 +458,7 @@ footer.tray {
       pane.appendChild(el("p", { class: "placeholder", text: "左の一覧から本を選んでください。" }));
       return;
     }
-    var book = state.detail.book, cands = state.detail.candidates;
+    var book = state.detail.book, cands = state.detail.candidates, next = nextStep(book);
     var facts = el("dl", { class: "facts" });
     function fact(label, value, mono) {
       if (value === null || value === undefined || value === "") return;
@@ -459,6 +485,7 @@ footer.tray {
       el("div", {}, [
         el("h2", { id: "detail-title", tabindex: "-1", text: book.title }),
         el("div", { class: "meta", style: "display:flex;gap:4px;flex-wrap:wrap" }, statusChips(book)),
+        next ? el("p", { class: "next" }, next) : null,
         facts
       ])
     ]));
@@ -495,8 +522,8 @@ footer.tray {
     if (!cands.length) {
       candBlock.appendChild(el("p", {
         class: "hint",
-        text: book.status === "not_found" || book.status === "incomplete"
-          ? "見つからなかった本は候補を保存していません。下の欄に ISBN を入力してください。"
+        text: ["not_found", "not_in_ndl", "incomplete"].indexOf(book.label) >= 0
+          ? "見つからなかった本は候補を保存していません。"
           : "候補はありません。"
       }));
     } else {
@@ -623,11 +650,7 @@ footer.tray {
   }
 
   function statusLabel(r) {
-    if (r.status === "found") {
-      var m = MATCH[r.match] || [r.match || "照合なし", ""];
-      return m[0] + (r.isbn ? " " + r.isbn : "");
-    }
-    return (STATUS[r.status] || [r.status])[0] + (r.error ? "(" + r.error + ")" : "");
+    return labelText(r.label) + (r.isbn ? " " + r.isbn : "") + (r.error ? "(" + r.error + ")" : "");
   }
 
   function apply() {
@@ -660,11 +683,9 @@ footer.tray {
           })
         ]));
         data.results.forEach(function (r) {
-          var label = statusLabel(r);
-          if (r.status === "not_found" && changes[r.asin]) label += "(この ISBN の紙版は NDL サーチにありません)";
           box.appendChild(el("div", { class: "row" }, [
             el("span", { text: r.title }),
-            el("span", { class: "mono", text: label })
+            el("span", { class: "mono", text: statusLabel(r) })
           ]));
         });
         if (data.failed) {
@@ -695,8 +716,9 @@ footer.tray {
   }
 
   // --- 起動 ---
-  document.getElementById("view-review").addEventListener("click", function () { setView("review"); });
-  document.getElementById("view-all").addEventListener("click", function () { setView("all"); });
+  VIEWS.forEach(function (v) {
+    document.getElementById("view-" + v).addEventListener("click", function () { setView(v); });
+  });
   document.getElementById("q").addEventListener("input", function (e) {
     state.q = e.target.value;
     clearTimeout(searchTimer);

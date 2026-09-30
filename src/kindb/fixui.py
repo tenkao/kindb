@@ -37,12 +37,29 @@ _MAX_BODY = 1_000_000
 _LIST_LIMIT = 500
 _MISSING = object()
 
-# 要確認の本: 見つからない、保留、作品だけ、照合が消えた(rematch で候補が合わなくなった)本。通信の失敗(error)は
-# 次の enrich が自動で引き直すので含めない
-_REVIEW_CONDITION = (
-    "bib_status IN ('not_found', 'incomplete') OR bib_match = 'work' "
-    "OR (bib_status = 'found' AND bib_match IS NULL)"
-)
+# 一覧のタブごとに出す状態の区分(label_of の値)。要確認には、反映待ちの本も足す。
+# 通信の失敗(error)は次の enrich が自動で引き直すので、要確認に含めない
+_VIEW_LABELS: dict[str, frozenset[str] | None] = {
+    "review": frozenset({"not_found", "incomplete", "work", "unmatched"}),
+    "corrected": frozenset({"isbn", "not_in_ndl", "excluded"}),
+    "all": None,
+}
+
+
+def label_of(status: str | None, match: str | None, source: str | None) -> str:
+    """一覧と詳細に出す状態の区分。表示名と次にすることは fix.html が持つ。
+
+    タブの絞り込みと画面の表示を同じ区分で決めるため、区分はここだけで決める。
+    """
+    if status is None:
+        return "unfetched"
+    if status == "found":
+        # 照合結果のない found は、rematch で候補が合わなくなった本
+        return match or "unmatched"
+    if status == "not_found" and source == "isbn":
+        # 訂正の ISBN で引いて見つからなかった本。書名で見つからなかった本とは、次にすることが違う
+        return "not_in_ndl"
+    return status
 
 
 def resolve_overrides_path(db_path: Path, explicit: str | None) -> Path:
@@ -105,41 +122,53 @@ def pending_csv_changes(csv_path: Path, db_path: Path) -> list[str]:
 
 
 def list_books(
-    db_path: Path, overrides: dict[str, str | None], *, view: str = "review", query: str = ""
+    db_path: Path,
+    overrides: dict[str, str | None],
+    *,
+    view: str = "review",
+    query: str = "",
+    staged: list[str] | tuple[str, ...] = (),
 ) -> dict[str, object]:
-    conditions = []
-    params: list[object] = []
-    if view == "review":
-        conditions.append(f"(({_REVIEW_CONDITION}) OR list_contains(?, asin))")
-        params.append(list(overrides))
-    elif view != "all":
+    """一覧の本。staged は画面でためた変更の ASIN で、CSV の未反映の訂正と合わせて要確認に出す。"""
+    if view not in _VIEW_LABELS:
         raise ValueError(f"Unknown view: {view}")
+    for asin in staged:
+        if not _ASIN.fullmatch(asin):
+            raise ValueError(f"Invalid ASIN: {asin!r}")
+    condition = "TRUE"
+    params: list[object] = []
     if query.strip():
         like = f"%{sqlguard.escape_like(query.strip())}%"
-        conditions.append("(title ILIKE ? ESCAPE '\\' OR authors_text ILIKE ? ESCAPE '\\' OR asin = ?)")
-        params += [like, like, query.strip()]
-    where = " AND ".join(conditions) or "TRUE"
+        condition = "(b.title ILIKE ? ESCAPE '\\' OR b.authors_text ILIKE ? ESCAPE '\\' OR b.asin = ?)"
+        params = [like, like, query.strip()]
     with closing(connect(db_path, read_only=True)) as con:
-        total = con.execute(f"SELECT count(*) FROM v_books WHERE {where}", params).fetchone()[0]
+        pending = set(_changed_asins(overrides, _db_overrides(con)))
+        # タブの絞り込みは label_of で決めるので、検索で絞った本をすべて読んでから Python で絞る(蔵書は数千冊)
         rows = con.execute(
-            f"""SELECT asin, title, authors_text, bib_status, bib_match, isbn
-                FROM v_books WHERE {where}
-                ORDER BY title, asin LIMIT {_LIST_LIMIT}""",
+            f"""SELECT b.asin, b.title, b.authors_text, b.bib_status, b.bib_match, b.isbn, f.source
+                FROM v_books b LEFT JOIN bib_fetches f ON f.asin = b.asin
+                WHERE {condition}
+                ORDER BY b.title, b.asin""",
             params,
         ).fetchall()
-    books = [
-        {
-            "asin": asin,
-            "title": title,
-            "authors": authors,
-            "status": status,
-            "match": match,
-            "isbn": isbn,
-            "override": _override_state(overrides, asin),
-        }
-        for asin, title, authors, status, match, isbn in rows
-    ]
-    return {"total": total, "books": books}
+    labels = _VIEW_LABELS[view]
+    waiting = pending | set(staged)
+    books = []
+    for asin, title, authors, status, match, isbn, source in rows:
+        label = label_of(status, match, source)
+        if labels is not None and label not in labels and not (view == "review" and asin in waiting):
+            continue
+        books.append(
+            {
+                "asin": asin,
+                "title": title,
+                "authors": authors,
+                "label": label,
+                "isbn": isbn,
+                "pending": asin in pending,
+            }
+        )
+    return {"total": len(books), "books": books[:_LIST_LIMIT]}
 
 
 def _override_state(overrides: dict[str, str | None], asin: str) -> dict[str, object] | None:
@@ -163,6 +192,7 @@ def book_detail(db_path: Path, asin: str, overrides: dict[str, str | None]) -> d
         items = con.execute(
             "SELECT item_xml FROM bib_candidates WHERE asin = ? ORDER BY search_rank", [asin]
         ).fetchall()
+        applied = _db_overrides(con)
     matched_ids = set(match[0]) if match else set()
     candidates = []
     for (xml,) in items:
@@ -189,7 +219,9 @@ def book_detail(db_path: Path, asin: str, overrides: dict[str, str | None]) -> d
     book = dict(zip(keys, row))
     book["acquired_at"] = str(book["acquired_at"]) if book["acquired_at"] is not None else None
     book["source"] = fetch[0] if fetch else None
+    book["label"] = label_of(book["status"], book["match"], book["source"])
     book["override"] = _override_state(overrides, asin)
+    book["pending"] = overrides.get(asin, _MISSING) != applied.get(asin, _MISSING)
     return {"book": book, "candidates": candidates}
 
 
@@ -224,6 +256,7 @@ class _CollectingReporter(Reporter):
                 "title": target.book.title,
                 "status": result.status,
                 "match": result.match.method if result.match else None,
+                "label": label_of(result.status, result.match.method if result.match else None, result.source),
                 "isbn": result.match.isbn if result.match else None,
                 "error": result.error,
             }
@@ -428,7 +461,9 @@ class _Handler(BaseHTTPRequestHandler):
             overrides = load_current_overrides(server.csv_path, server.db_path)
             view = query.get("view", ["review"])[0]
             text = query.get("q", [""])[0]
-            self._json(HTTPStatus.OK, list_books(server.db_path, overrides, view=view, query=text))
+            # 画面でためた変更はサーバが知らないので、要確認に足す ASIN を画面から受け取る
+            staged = [a for a in query.get("staged", [""])[0].split(",") if a]
+            self._json(HTTPStatus.OK, list_books(server.db_path, overrides, view=view, query=text, staged=staged))
         elif method == "GET" and path.startswith("/api/books/"):
             asin = unquote(path[len("/api/books/"):])
             overrides = load_current_overrides(server.csv_path, server.db_path)

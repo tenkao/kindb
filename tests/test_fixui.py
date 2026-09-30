@@ -64,18 +64,56 @@ def _csv(tmp_path: Path, body: str = "") -> Path:
 # --- 一覧と詳細 -----------------------------------------------------------------------------------------
 
 
-def test_review_list_shows_books_needing_attention_and_overridden_books(library: Path) -> None:
+@pytest.mark.parametrize(
+    ("status", "match", "source", "label"),
+    [
+        (None, None, None, "unfetched"),
+        ("found", "edition", "title", "edition"),
+        ("found", "work", "title", "work"),
+        ("found", "isbn", "isbn", "isbn"),
+        ("found", None, "title", "unmatched"),
+        ("not_found", None, "title", "not_found"),
+        ("not_found", None, "isbn", "not_in_ndl"),
+        ("incomplete", None, "title", "incomplete"),
+        ("excluded", None, None, "excluded"),
+        ("error", None, None, "error"),
+    ],
+)
+def test_label_of(status: str | None, match: str | None, source: str | None, label: str) -> None:
+    assert fixui.label_of(status, match, source) == label
+
+
+def test_review_list_shows_books_needing_attention_and_books_waiting_to_be_applied(library: Path) -> None:
     _fetched(library)
     review = list_books(library, {})
-    assert [b["asin"] for b in review["books"]] == [TOYOTA]
-    assert review["books"][0]["status"] == "not_found"
+    assert [(b["asin"], b["label"], b["pending"]) for b in review["books"]] == [(TOYOTA, "not_found", False)]
 
-    # 訂正のある本は、照合できていても要確認に出す
-    with_override = list_books(library, {HIMO: "9784040000003"})
-    assert {b["asin"] for b in with_override["books"]} == {HIMO, TOYOTA}
+    # CSV にあって DB に未反映の訂正は、照合できている本でも要確認に出す
+    with_override = list_books(library, {HIMO: "9784040000008"})
+    assert {(b["asin"], b["pending"]) for b in with_override["books"]} == {(HIMO, True), (TOYOTA, False)}
+
+    # 画面でためた変更は、画面から ASIN を受け取って要確認に出す
+    assert {b["asin"] for b in list_books(library, {}, staged=[TSUGE])["books"]} == {TSUGE, TOYOTA}
+    with pytest.raises(ValueError):
+        list_books(library, {}, staged=["B0' OR 1=1"])
 
     assert list_books(library, {}, view="all")["total"] == 3
     assert [b["asin"] for b in list_books(library, {}, view="all", query="つげ")["books"]] == [TSUGE]
+
+
+def test_corrected_list_shows_books_fixed_by_applied_overrides(library: Path, tmp_path: Path) -> None:
+    # ISBN で引けた本、ISBN で引いても NDL になかった本、除外した本。どれも要確認には出さない
+    csv_path = _csv(tmp_path, f"{TOYOTA},{TOYOTA_ISBN}\n{HIMO},9784040000008\n{TSUGE},\n")
+    ndl = FakeOpenSearch([({"isbn": TOYOTA_ISBN}, rss([TOYOTA_BY_ISBN]))])
+    run_enrich(library, ndl.client(), overrides_path=csv_path)
+    overrides = load_current_overrides(csv_path, library)
+
+    corrected = list_books(library, overrides, view="corrected")
+    assert {(b["asin"], b["label"]) for b in corrected["books"]} == {
+        (TOYOTA, "isbn"), (HIMO, "not_in_ndl"), (TSUGE, "excluded")
+    }
+    assert list_books(library, overrides)["books"] == []
+    assert book_detail(library, HIMO, overrides)["book"]["label"] == "not_in_ndl"
 
 
 def test_detail_returns_candidates_with_13_digit_isbns_and_the_current_match(library: Path) -> None:
@@ -86,6 +124,8 @@ def test_detail_returns_candidates_with_13_digit_isbns_and_the_current_match(lib
     assert cands["R100000002-I030280980"]["matched"] is True
     assert cands["R100000002-I000001657059"]["matched"] is False
     assert detail["book"]["match"] == "edition"
+    assert (detail["book"]["label"], detail["book"]["pending"]) == ("edition", False)
+    assert book_detail(library, TSUGE, {TSUGE: None})["book"]["pending"] is True
 
 
 def test_candidate_isbn_with_a_wrong_check_digit_cannot_be_picked(library: Path) -> None:
@@ -129,7 +169,7 @@ def test_apply_writes_the_csv_and_fetches_only_the_changed_book_by_isbn(library:
     assert csv_path.read_text(encoding="utf-8") == f"asin,isbn\n{TOYOTA},{TOYOTA_ISBN}\n"
     assert ndl.calls == [{"isbn": TOYOTA_ISBN}]
     assert result.changed == [TOYOTA]
-    assert [(r["asin"], r["status"], r["match"]) for r in result.results] == [(TOYOTA, "found", "isbn")]
+    assert [(r["asin"], r["label"], r["isbn"]) for r in result.results] == [(TOYOTA, "isbn", TOYOTA_ISBN)]
     assert _rows(library, "SELECT method, isbn FROM bib_matches WHERE asin = ?", [TOYOTA]) == [("isbn", TOYOTA_ISBN)]
 
 
@@ -320,6 +360,10 @@ def test_apply_over_http(server: FixServer, library: Path) -> None:
     assert json.loads(body)["changed"] == [TOYOTA]
     status, body = _request(server, f"/api/books/{TOYOTA}", token=server.token)
     assert json.loads(body)["book"]["match"] == "isbn"
+    status, body = _request(server, "/api/books?view=corrected", token=server.token)
+    assert [b["asin"] for b in json.loads(body)["books"]] == [TOYOTA]
+    status, body = _request(server, f"/api/books?staged={HIMO},{TSUGE}", token=server.token)
+    assert {b["asin"] for b in json.loads(body)["books"]} == {HIMO, TSUGE}
 
 
 def test_ctrl_c_during_apply_stops_the_server_after_answering(
@@ -364,6 +408,7 @@ def test_apply_requires_json(server: FixServer) -> None:
 def test_lookup_and_validation_errors_are_4xx(server: FixServer) -> None:
     assert _request(server, "/api/books/B0000000ZZ", token=server.token)[0] == 404
     assert _request(server, "/api/books?view=bogus", token=server.token)[0] == 400
+    assert _request(server, "/api/books?staged=B0%27%3B", token=server.token)[0] == 400
     assert _request(server, "/api/apply", token=server.token, body={"changes": {TOYOTA: "123"}})[0] == 400
 
 
