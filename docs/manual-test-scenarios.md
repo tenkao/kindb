@@ -25,11 +25,13 @@ ls /tmp/kindb_manual/Kindle.zip
 
 uv run ruff check . && uv run pytest -q
 kindb --help
+kindb status --db "$KINDB_UNSET"; echo "exit=$?"
 ```
 
 期待:
 - `kindb --help` に `import`, `import-official`, `status`, `search`, `query`, `authors`, `recent`, `enrich`, `rematch`, `fix`, `delete` が表示される。
 - `genres`, `series`, `reading` は表示されない。
+- 設定していない変数を `--db` に渡すと、`Invalid value for '--db': must not be empty …` で `exit=2`。既定の `~/.kindb/kindle.duckdb` は開かない。以下の節を別の端末で続けるときに `TEST_DB` や `BIB_DB` を設定し忘れても、実際の蔵書 DB に対して動かない。
 
 ## 1. import
 

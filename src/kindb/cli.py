@@ -52,8 +52,18 @@ def _report_locked_db(func: Callable[..., None]) -> Callable[..., None]:
     return wrapper
 
 
+def _reject_empty_db(value: str | None) -> str | None:
+    # get_db_path は空文字を「指定なし」とみなすので、設定し忘れた変数(--db "$UNSET")で実際の蔵書 DB を黙って使う。
+    # 手動テストで一時 DB のつもりが実 DB に対して動いたため
+    if value is not None and not value.strip():
+        raise typer.BadParameter("must not be empty (is the shell variable holding the path set?)")
+    return value
+
+
 def _db_option() -> Path:
-    return typer.Option(None, "--db", help="Database path (default: ~/.kindb/kindle.duckdb)")
+    return typer.Option(
+        None, "--db", callback=_reject_empty_db, help="Database path (default: ~/.kindb/kindle.duckdb)"
+    )
 
 
 def _list_limit_option() -> int:

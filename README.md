@@ -41,7 +41,7 @@ uv を使わない場合は、任意の仮想環境で `pip install -e .` を実
 
 ## 使い方
 
-DB は既定で `~/.kindb/kindle.duckdb` に作られる。各コマンドの `--db PATH` か、環境変数 `KINDB_DB_PATH` で変えられる。
+DB は既定で `~/.kindb/kindle.duckdb` に作られる。各コマンドの `--db PATH` か、環境変数 `KINDB_DB_PATH` で変えられる。`--db` に空の値を渡すとエラーになる(`--db "$VAR"` の変数を設定し忘れたとき、既定の DB を使わないため)。
 
 ### 取り込み
 

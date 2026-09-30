@@ -74,6 +74,19 @@ def test_status_without_db_guides_to_import_and_creates_nothing(tmp_path: Path) 
     assert not db_dir.exists()
 
 
+@pytest.mark.parametrize("command", [["status"], ["import", "kindle.json"], ["enrich"], ["fix"], ["delete", "--yes"]])
+def test_empty_db_path_is_rejected_instead_of_using_the_default_db(
+    command: list[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # --db "$UNSET" のような設定し忘れで、既定の実 DB に対して動かないこと
+    default = tmp_path / "default.duckdb"
+    monkeypatch.setenv("KINDB_DB_PATH", str(default))
+    result = runner.invoke(app, [*command, "--db", ""])
+    assert result.exit_code == 2
+    assert "--db" in result.output
+    assert not default.exists()
+
+
 def test_status_with_db(imported_db: Path) -> None:
     result = runner.invoke(app, ["status", "--db", str(imported_db)])
     assert result.exit_code == 0
