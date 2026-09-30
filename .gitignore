@@ -33,5 +33,6 @@ tests/fixtures/kindle.json
 # Ruff
 .ruff_cache/
 
-# Retro
+# 手元の作業用の文書。振り返りと残りのタスク(実 DB の書名を含む)は公開しない
 docs/retro/
+docs/tasks.md
