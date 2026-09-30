@@ -59,7 +59,7 @@ kindb は、Chrome 拡張で取得した `kindle.json`(主データ)と、任意
 ## Commands
 
 ```bash
-# Create / update .venv (Python 3.13 pinned by .python-version, dev group included)
+# Create / update .venv (Python 3.14 pinned by .python-version, dev group included)
 # Do not place the project under iCloud-synced dirs (~/Documents etc.): .pth files created there
 # get the macOS hidden flag and Python 3.13+ site.py skips them, breaking the editable install.
 uv sync
@@ -73,7 +73,7 @@ uv run kindb <subcommand>
 # --python is required: uv tool install does not read the project's .python-version.
 # Dependency update procedure: see README.md「依存更新の手順」
 uv export --locked --no-dev --no-emit-project --no-hashes --no-annotate --format requirements.txt -o constraints.txt \
-  && uv tool install --editable . --reinstall --python 3.13 --constraints constraints.txt
+  && uv tool install --editable . --reinstall --python 3.14 --constraints constraints.txt
 
 # Check .venv and tool env drift (same output = in sync)
 uv run python -c "import sys, duckdb; print(sys.version.split()[0], duckdb.__version__)"

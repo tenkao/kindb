@@ -23,14 +23,14 @@ Amazon のアカウントサービスから取得した公式 `Kindle.zip` は�
 
 ## インストール
 
-macOS と Linux で動かす前提(Windows では確認していない)。Python >= 3.10。開発環境は [uv](https://docs.astral.sh/uv/) で管理し、`.python-version` で Python 3.13 に固定している。
+macOS と Linux で動かす前提(Windows では確認していない)。Python >= 3.10。開発環境は [uv](https://docs.astral.sh/uv/) で管理し、`.python-version` で Python 3.14 に固定している。
 
 ```bash
 uv sync                          # .venv を作成し、開発依存込みでインストール
 
 # kindb をグローバルコマンドとして ~/.local/bin に入れる(依存版を uv.lock に揃える)
 uv export --locked --no-dev --no-emit-project --no-hashes --no-annotate --format requirements.txt -o constraints.txt \
-  && uv tool install --editable . --reinstall --python 3.13 --constraints constraints.txt
+  && uv tool install --editable . --reinstall --python 3.14 --constraints constraints.txt
 ```
 
 `uv tool install` は `uv.lock` を読まないため、lock から生成した `constraints.txt` で tool 環境の依存版をテスト済みの版に揃える。`constraints.txt` は毎回生成するファイルで、コミットしない。
@@ -186,7 +186,7 @@ uv lock --upgrade \
   && uv run ruff check . \
   && uv run pytest \
   && uv export --locked --no-dev --no-emit-project --no-hashes --no-annotate --format requirements.txt -o constraints.txt \
-  && uv tool install --editable . --reinstall --python 3.13 --constraints constraints.txt \
+  && uv tool install --editable . --reinstall --python 3.14 --constraints constraints.txt \
   && uv run python -m tests.create_fixture \
   && kindb import tests/fixtures/kindle.json --db /tmp/kindb_check.duckdb \
   && kindb status --db /tmp/kindb_check.duckdb
