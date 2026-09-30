@@ -548,16 +548,35 @@ kindb query "SELECT count(*) AS n FROM bib_matches" --db "$BIB_DB"
 
 期待: 取り込み直しても `bib_matches` の件数は変わらない。
 
+詳細の表示とログファイル(`-v`、`--log-file`):
+
+```bash
+kindb enrich --refresh --where "asin = 'B00W535LOU'" -v --log-file /tmp/kindb_manual/enrich.log --db "$BIB_DB"
+kindb enrich --refresh --where "asin = 'B00W535LOU'" -v --db "$BIB_DB" 2>/dev/null
+cat /tmp/kindb_manual/enrich.log
+kindb enrich --log-file "" --db "$BIB_DB"; echo "exit=$?"
+kindb enrich --log-file /tmp/kindb_manual/missing/enrich.log --db "$BIB_DB"; echo "exit=$?"
+```
+
+期待:
+- 1 回目: `[1/1] B00W535LOU found (edition) …` の前に、`  NDL Search title="…" creator="…": N hits (0.4s)` のような問い合わせの行が 1 行以上、灰色で出る。最後の `Fetched 1 of 1 books` の前に `  Saved 1 books to the database` が出る。
+- 2 回目: 標準エラーを捨てると、問い合わせの行と保存の行は消え、`Fetching …`、`[1/1] …`、`Fetched …` だけが残る(詳細は標準出力に混ざらない)。
+- ログファイルの各行は `2026-09-30 12:34:56,789 INFO ` のような日時と重要度で始まり、1 回目の端末の行と詳細の行がすべて入っている。2 回目の行は入らない。
+- 空の `--log-file` は `Invalid value for '--log-file': must not be empty …` で `exit=2`。
+- ないディレクトリのパスは `Error: Cannot open the log file: …` で `exit=1`。取得は始まらない。
+- NDL サーチの 429 で待つときの `Warning: NDL Search returned HTTP 429; retrying in 60s (1/3)` は、手元では起こせないので自動テストで確かめる。
+
 ## 8.6 手動訂正の画面(fix)
 
 8.5 の `$BIB_DB` を続けて使う。反映すると NDL サーチに問い合わせる(下の手順で 2〜7 回)。
 
 ```bash
-kindb fix --db "$BIB_DB" --overrides /tmp/kindb_manual/overrides.csv
+kindb fix -v --db "$BIB_DB" --overrides /tmp/kindb_manual/overrides.csv --log-file /tmp/kindb_manual/fix.log
 ```
 
 期待(起動):
 - `Serving the fix page at http://127.0.0.1:<port>/` と `Overrides CSV: /tmp/kindb_manual/overrides.csv` が出て、ブラウザが開く。
+- 画面が開くと、端末に `  GET / HTTP/1.1 200`、`  GET /api/state HTTP/1.1 200`、`  GET /api/books?view=review&q=&staged= HTTP/1.1 200` の 3 行が灰色で出る(`-v` の効果)。`/favicon.ico` の 404 の行は出ない。
 - 画面の上に DB と CSV のパスが出る。「要確認」の一覧は `0 冊`(8.5 の本は、照合できたか訂正済み)。
 - 「訂正済み」を押すと、8.5 で訂正した `B000NOBOOK`(「ISBN で特定」)と `B088GZFB9Z`(「除外」)が出る。
 
@@ -565,7 +584,7 @@ kindb fix --db "$BIB_DB" --overrides /tmp/kindb_manual/overrides.csv
 1. 「すべて」を押し、検索欄に `ヒモ` と入れて `B0GMYR661F` を選ぶ。ラベルは「紙版を特定」で、その下に次にすることの案内は出ない。ASIN の下に Amazon の商品ページへのリンク(`https://www.amazon.co.jp/dp/B0GMYR661F`)が出る。保存済みの候補の表が出て、今の照合の行に「現在の照合」が付く。書名は NDL サーチへのリンク。
 2. ISBN 欄に `9784822250851`(検査数字の誤り)を入れると、欄が赤くなり「チェックデジットが一致しません」と出て、「この ISBN を指定」を押せない。`9784822250850` に直すと押せる。押すと、入力欄のすぐ下に「反映待ち: ISBN 9784822250850 を指定」と「キャンセル」が出て、画面の下に「反映待ち 1 冊」と「ISBN の指定: 1 冊(NDL サーチへの問い合わせ 1 回)」が出る。Enter キーで指定しても同じで、取り消されない。検索欄を空にして「要確認」を押すと、`B0GMYR661F` が「紙版を特定」「反映待ち」で出る。
 3. 「すべて」を押して `B000NOBOOK` を選び、「訂正を取り消す」を押す。上の枠が「反映待ち: 訂正の取り消し」と「キャンセル」に変わる。反映待ちが 2 冊になり、「訂正の取り消し: 1 冊(書名で再検索…)」が加わる。
-4. 「反映する」を押す。問い合わせ中の表示のあと、「反映しました(再取得 2 冊)」と 1 冊ずつの結果が出る。`B0GMYR661F` は「ISBN で特定 9784822250850」、`B000NOBOOK` は「見つからない」。
+4. 「反映する」を押す。問い合わせ中の表示のあと、「反映しました(再取得 2 冊)」と 1 冊ずつの結果が出る。`B0GMYR661F` は「ISBN で特定 9784822250850」、`B000NOBOOK` は「見つからない」。端末には、`  Applying: fetching 2 books from NDL Search` のあと、本ごとに問い合わせの行とその本の結果の行(`  [1/2] B000NOBOOK not_found …`、`  [2/2] B0GMYR661F found (isbn) …`)が出て、`  Saved 2 books to the database`、`  POST /api/apply HTTP/1.1 200` と続く。
 5. 「要確認」に `B000NOBOOK`(「見つからない」)だけが出る。選ぶと、ラベルの下に、ISBN の入力を促す案内が色付きの枠で出る。「訂正済み」には `B0GMYR661F`(「ISBN で特定」)と `B088GZFB9Z`(「除外」)が出る。
 
 期待(反映のあと):
@@ -579,8 +598,9 @@ curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: evil.example' http://127.0.0.
 
 - CSV は `asin,isbn`、`B088GZFB9Z,`、`B0GMYR661F,9784822250850` の 3 行(`B000NOBOOK` の行は消えている)。
 - `bib_fetches` で `B0GMYR661F` は `found` で `source = isbn`、`B000NOBOOK` は `not_found` で `source = title`、`B088GZFB9Z` は `excluded` のまま。
-- トークンのない API の要求と、`Host` の違う要求は、どちらも `403`。
+- トークンのない API の要求と、`Host` の違う要求は、どちらも `403`。端末の要求の行には、`403 (Missing or wrong token. Reload the page.)` と `403 (Unexpected Host header.)` のように理由が付く。
 - 端末で Ctrl-C を押すと `Stopped.` が出て終わる。
+- `/tmp/kindb_manual/fix.log` に、起動の 3 行、要求の行、反映の行、`Stopped.` が日時付きで入っている。
 
 ## 9. v0.2 DB マイグレーション
 

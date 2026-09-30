@@ -120,7 +120,8 @@ class FakeOpenSearch:
         return rss([])
 
     def client(self) -> NdlClient:
-        return NdlClient(interval=0.0, fetch=self.fetch, sleep=lambda _: None)
+        # 時計を止め、ログの応答にかかった秒数を (0.0s) に固定する。間隔は 0 なので待ちには使わない
+        return NdlClient(interval=0.0, fetch=self.fetch, sleep=lambda _: None, clock=lambda: 0.0)
 
 
 def http_error(code: int, retry_after: str | None = None) -> urllib.error.HTTPError:

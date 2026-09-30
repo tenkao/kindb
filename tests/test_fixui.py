@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import socket
 import stat
 import subprocess
@@ -412,6 +413,67 @@ def test_lookup_and_validation_errors_are_4xx(server: FixServer) -> None:
     assert _request(server, "/api/apply", token=server.token, body={"changes": {TOYOTA: "123"}})[0] == 400
 
 
+def test_requests_and_applied_books_are_logged(server: FixServer, caplog: pytest.LogCaptureFixture) -> None:
+    # -v とログファイルに出す行。ページが応答を受け取った時点で出ていること
+    with caplog.at_level(logging.INFO, logger="kindb"):
+        _request(server, "/api/apply", token=server.token, body={"changes": {TOYOTA: TOYOTA_ISBN}})
+        _request(server, "/api/books/B0000000ZZ", token=server.token)
+    assert [r.getMessage() for r in caplog.records] == [
+        "Applying: fetching 1 books from NDL Search",
+        f'NDL Search isbn="{TOYOTA_ISBN}": 1 hits (0.0s)',
+        f"[1/1] {TOYOTA} found (isbn) トヨタ生産方式",
+        "Saved 1 books to the database",
+        "POST /api/apply HTTP/1.1 200",
+        "GET /api/books/B0000000ZZ HTTP/1.1 404 (No book with ASIN B0000000ZZ)",
+    ]
+
+
+def test_failed_books_and_stopped_applies_are_warnings(
+    library: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # 429 の待ちと同じく、通信の問題は -v なしでも端末に出す(WARNING)
+    _fetched(library)
+    failing = FakeOpenSearch([({"isbn": TOYOTA_ISBN}, http_error(500))])
+    with caplog.at_level(logging.INFO, logger="kindb"):
+        apply_changes(library, tmp_path / "overrides.csv", {TOYOTA: TOYOTA_ISBN}, _factory(failing))
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == [f"[1/1] {TOYOTA} error トヨタ生産方式 - HTTP 500 from NDL Search"]
+
+    caplog.clear()
+    busy = FakeOpenSearch([({"isbn": TOYOTA_ISBN}, http_error(429, retry_after="3600"))])
+    with caplog.at_level(logging.INFO, logger="kindb"):
+        # 同じ ISBN のままでは引き直さないので、いったん訂正を取り消してから指定し直す
+        apply_changes(library, tmp_path / "overrides.csv", {TOYOTA: None}, _factory(busy))
+        result = apply_changes(library, tmp_path / "overrides.csv", {TOYOTA: TOYOTA_ISBN}, _factory(busy))
+    assert result.aborted == "retry_later"
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings[-1] == "Stopped applying: NDL Search asked to wait 3600 seconds; retry after that"
+
+
+def test_request_lines_escape_control_characters(server: FixServer, caplog: pytest.LogCaptureFixture) -> None:
+    # ブラウザは URL の制御文字を符号化するが、同じマシンのプロセスは生のまま送れる。端末のエスケープを書かない
+    with caplog.at_level(logging.INFO, logger="kindb"), socket.create_connection(("127.0.0.1", server.port)) as sock:
+        sock.sendall(f"GET /\x1b]0;x\x07 HTTP/1.0\r\nHost: 127.0.0.1:{server.port}\r\n\r\n".encode("latin-1"))
+        sock.recv(65536)
+    [line] = [r.getMessage() for r in caplog.records]
+    assert line == "GET /\\x1b]0;x\\x07 HTTP/1.0 404 (Not found.)"
+
+
+def test_unexpected_errors_are_logged_with_the_traceback(
+    server: FixServer, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(fixui, "list_books", broken)
+    with caplog.at_level(logging.INFO, logger="kindb"):
+        status, body = _request(server, "/api/books", token=server.token)
+    assert status == 500 and "RuntimeError: boom" in body
+    [error] = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert error.getMessage() == "Unexpected error while handling GET /api/books"
+    assert error.exc_info is not None and error.exc_info[0] is RuntimeError
+
+
 # --- CLI ------------------------------------------------------------------------------------------------
 
 
@@ -427,6 +489,18 @@ def test_fix_command_prints_the_url_and_stops_on_ctrl_c(
     assert "Serving the fix page at http://127.0.0.1:" in result.stdout
     assert str(csv_path) in result.stdout
     assert len(opened) == 1 and opened[0].startswith("http://127.0.0.1:")
+
+
+def test_fix_command_log_file_records_the_output(
+    library: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(FixServer, "serve_forever", lambda self: (_ for _ in ()).throw(KeyboardInterrupt))
+    log = tmp_path / "fix.log"
+    result = runner.invoke(app, ["fix", "--db", str(library), "--no-browser", "--log-file", str(log)])
+    assert result.exit_code == 0, result.output
+    text = log.read_text(encoding="utf-8")
+    assert " INFO Serving the fix page at http://127.0.0.1:" in text
+    assert " INFO Stopped." in text
 
 
 def test_fix_command_refuses_a_broken_csv(library: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

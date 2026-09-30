@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
 import time
 from contextlib import closing, contextmanager
@@ -33,6 +34,8 @@ from kindb.matching import (
     search_stages,
 )
 from kindb.ndl import MAX_RESULTS, NdlClient, NdlError, NdlRecord, NdlRetryLater, SearchResponse, parse_item
+
+logger = logging.getLogger(__name__)
 
 STATUS_FOUND = "found"
 STATUS_NOT_FOUND = "not_found"
@@ -188,6 +191,10 @@ class FetchResult:
     candidates: list[NdlRecord]
     match: Match | None
     error: str | None = None
+
+    @property
+    def outcome(self) -> str:
+        return self.status + (f" ({self.match.method})" if self.match is not None else "")
 
 
 def fetch_book(client: NdlClient, book: Book, override_isbn: str | None = None) -> FetchResult:
@@ -602,11 +609,13 @@ def _run_enrich_locked(
         except DatabaseLockedError:
             if max_wait >= FINAL_LOCK_WAIT:
                 raise
+            logger.info("Database still in use; keeping %d books in memory and saving them later", len(buffer))
             return False  # 結果を持ったまま取得を続け、次の書き込みでまとめて書く
         with closing(con):
             write_results(
                 con, buffer, _now(), run_started_at=started_at, run_fetched=summary.fetched, record_refetch=refetching
             )
+        logger.info("Saved %d books to the database", len(buffer))
         buffer.clear()
         return True
 

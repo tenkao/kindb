@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import http.client
+import logging
 import time
 import urllib.error
 import urllib.parse
@@ -128,6 +129,54 @@ def test_client_gives_up_after_repeated_429() -> None:
         client.search({"title": "x"})
     # Retry-After がなければ 60 秒、120 秒、180 秒と待ってから諦める
     assert [s for s in clock.sleeps if s >= 60] == [60.0, 120.0, 180.0]
+
+
+def test_client_logs_each_request_with_its_conditions_hits_and_response_time(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clock = _Clock()
+
+    def fetch(url: str, user_agent: str) -> str:
+        clock.now += 0.5  # 応答に 0.5 秒かかる。間隔の 3 秒の待ちは含めない
+        return rss([])
+
+    client = NdlClient(interval=3.0, fetch=fetch, sleep=clock.sleep, clock=clock)
+    with caplog.at_level(logging.INFO, logger="kindb.ndl"):
+        client.search({"title": "理想のヒモ生活", "creator": "日月 ネコ"})
+        client.search({"title": "理想のヒモ生活"})
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+        (logging.INFO, 'NDL Search title="理想のヒモ生活" creator="日月 ネコ": 0 hits (0.5s)'),
+        (logging.INFO, 'NDL Search title="理想のヒモ生活": 0 hits (0.5s)'),
+    ]
+
+
+def test_client_warns_before_each_429_wait(caplog: pytest.LogCaptureFixture) -> None:
+    # 何も出さずに数分止まると動いているのか分からないので、-v なしでも出る WARNING にする
+    clock = _Clock()
+
+    def fetch(url: str, user_agent: str) -> str:
+        raise http_error(429)
+
+    client = NdlClient(interval=3.0, fetch=fetch, sleep=clock.sleep, clock=clock)
+    with caplog.at_level(logging.WARNING, logger="kindb.ndl"), pytest.raises(NdlError):
+        client.search({"title": "x"})
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+        (logging.WARNING, f"NDL Search returned HTTP 429; retrying in {wait}s ({n}/3)")
+        for n, wait in [(1, 60), (2, 120), (3, 180)]
+    ]
+
+
+def test_client_logs_the_conditions_of_a_failed_request(caplog: pytest.LogCaptureFixture) -> None:
+    # 1 冊で何回も引くので、-v とログファイルで、どの条件で失敗したかが分かること
+    def fetch(url: str, user_agent: str) -> str:
+        raise urllib.error.URLError("no route")
+
+    client = NdlClient(interval=0.0, fetch=fetch, sleep=lambda _: None)
+    with caplog.at_level(logging.INFO, logger="kindb.ndl"), pytest.raises(NdlError):
+        client.search({"title": "x", "creator": "y"})
+    assert [r.getMessage() for r in caplog.records] == [
+        'NDL Search title="x" creator="y": Could not reach NDL Search: <urlopen error no route>'
+    ]
 
 
 def test_client_waits_for_retry_after_given_as_http_date() -> None:

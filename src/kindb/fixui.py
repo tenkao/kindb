@@ -8,13 +8,13 @@ from __future__ import annotations
 import csv
 import importlib.resources
 import json
+import logging
 import os
 import re
 import secrets
 import socket
 import stat
 import tempfile
-import traceback
 from contextlib import closing
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -31,10 +31,15 @@ from kindb.enrich import EnrichLockedError, FetchResult, Reporter, Target, load_
 from kindb.matching import isbn_checksum_ok, normalize_isbn
 from kindb.ndl import NdlClient, parse_item
 
+logger = logging.getLogger(__name__)
+
 # ASIN は英数字だけ。反映の対象を --where の SQL に埋め込むので、この形以外は受け付けない
 _ASIN = re.compile(r"^[A-Za-z0-9]{1,20}$")
 _MAX_BODY = 1_000_000
 _LIST_LIMIT = 500
+# 要求の行の制御文字を \xNN に、\ を \\ にする。標準ライブラリの log_message と同じ扱い(端末のエスケープシーケンスを
+# 書かず、元の \xNN と区別する)。log_request を上書きしたので、その変換を通らない
+_CONTROL_CHARS = {c: f"\\x{c:02x}" for c in (*range(0x20), *range(0x7F, 0xA0))} | {ord("\\"): "\\\\"}
 _MISSING = object()
 
 # 一覧のタブごとに出す状態の区分(label_of の値)。要確認には、反映待ちの本も足す。
@@ -246,10 +251,22 @@ class ApplyResult:
 
 
 class _CollectingReporter(Reporter):
+    """結果はページに返す。端末(-v。失敗した本は -v なしでも)とログファイルには、enrich と同じ形の行を出す。"""
+
     def __init__(self) -> None:
         self.results: list[dict[str, object]] = []
 
+    def start(self, targets: int, interval: float) -> None:
+        logger.info("Applying: fetching %d books from NDL Search", targets)
+
+    def waiting_for_lock(self) -> None:
+        logger.info("Database is in use by another process; waiting to write...")
+
     def book(self, index: int, total: int, target: Target, result: FetchResult) -> None:
+        # 通信に失敗した本は、429 の待ちと同じく -v なしでも端末に出す。ログファイルでは WARNING で探せる
+        level = logging.WARNING if result.error else logging.INFO
+        error = f" - {result.error}" if result.error else ""
+        logger.log(level, "[%d/%d] %s %s %s%s", index, total, result.asin, result.outcome, target.book.title, error)
         self.results.append(
             {
                 "asin": result.asin,
@@ -318,6 +335,12 @@ def apply_changes(
     result.failed = summary.counts.get("error", 0)
     result.aborted = summary.aborted
     result.interrupted = summary.interrupted
+    if summary.aborted == "retry_later":
+        logger.warning(
+            "Stopped applying: NDL Search asked to wait %.0f seconds; retry after that", summary.retry_after
+        )
+    elif summary.aborted:
+        logger.warning("Stopped applying after repeated failures to reach NDL Search; retry later")
     return result
 
 
@@ -373,9 +396,18 @@ class _Handler(BaseHTTPRequestHandler):
     server: FixServer
     # 要求を 1 本ずつ処理するので、何も送らない接続が 1 本あるだけで他の要求がすべて止まらないよう、待ちを区切る
     timeout = 10
+    # エラーで応答するときの理由。要求の 1 行に添える
+    _error_message: str | None = None
+
+    def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
+        # 要求ごとの 1 行は、-v とログファイルにだけ出す。反映の結果はページに出る。
+        # 応答の本文を送る前に呼ばれるので、ページが結果を受け取った時点でこの行は出ている
+        code = code.value if isinstance(code, HTTPStatus) else code
+        reason = f" ({self._error_message})" if self._error_message else ""
+        logger.info("%s", f"{self.requestline} {code}{reason}".translate(_CONTROL_CHARS))
 
     def log_message(self, format: str, *args: object) -> None:
-        # 要求ごとのアクセスログは出さない。反映の結果はページに出る
+        # log_error(待ち切れた接続など)は画面の操作と対応しないので出さない。要求の行は log_request が出す
         pass
 
     # --- 応答 ---
@@ -396,6 +428,7 @@ class _Handler(BaseHTTPRequestHandler):
                    "application/json; charset=utf-8")
 
     def _error(self, status: int, message: str) -> None:
+        self._error_message = message
         self._json(status, {"error": message})
 
     # --- 検査 ---
@@ -439,8 +472,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._error(HTTPStatus.NOT_FOUND, str(e))
         except ValueError as e:
             self._error(HTTPStatus.BAD_REQUEST, str(e))
-        except Exception as e:  # noqa: BLE001 - ページに理由を出し、端末には調べられるようトレースバックを残す
-            traceback.print_exc()
+        except Exception as e:  # noqa: BLE001 - ページに理由を出し、端末とログファイルには調べられるようトレースバックを残す
+            logger.exception("Unexpected error while handling %s %s", method, url.path)
             self._error(HTTPStatus.INTERNAL_SERVER_ERROR, f"{type(e).__name__}: {e}")
 
     def _api(self, method: str, path: str, query: dict[str, list[str]]) -> None:

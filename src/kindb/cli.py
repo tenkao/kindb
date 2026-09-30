@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import functools
 import json
+import logging
 import math
+import sys
 import webbrowser
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
 
 import typer
 from rich.console import Console
@@ -52,9 +55,9 @@ def _report_locked_db(func: Callable[..., None]) -> Callable[..., None]:
     return wrapper
 
 
-def _reject_empty_db(value: str | None) -> str | None:
+def _reject_empty_path(value: str | None) -> str | None:
     # get_db_path は空文字を「指定なし」とみなすので、設定し忘れた変数(--db "$UNSET")で実際の蔵書 DB を黙って使う。
-    # 手動テストで一時 DB のつもりが実 DB に対して動いたため
+    # 手動テストで一時 DB のつもりが実 DB に対して動いたため。--log-file も同じ誤りを同じ文言で知らせる
     if value is not None and not value.strip():
         raise typer.BadParameter("must not be empty (is the shell variable holding the path set?)")
     return value
@@ -62,7 +65,121 @@ def _reject_empty_db(value: str | None) -> str | None:
 
 def _db_option() -> Path:
     return typer.Option(
-        None, "--db", callback=_reject_empty_db, help="Database path (default: ~/.kindb/kindle.duckdb)"
+        None, "--db", callback=_reject_empty_path, help="Database path (default: ~/.kindb/kindle.duckdb)"
+    )
+
+
+# 詳細ログ(kindb.* の logger)は標準エラーに出す。標準出力は 1 冊ごとの結果と kindb query の JSON に使うので混ぜない
+_logger = logging.getLogger("kindb")
+# 端末に出した行を --log-file にも残すための logger。-v の標準エラーに二重に出さないよう kindb から切り離す
+_output_log = logging.getLogger("kindb.output")
+_output_log.propagate = False
+# handler が 1 つもないと、WARNING 以上が logging.lastResort から標準エラーにもう一度出る(--log-file なしのとき)。
+# pytest は propagate しない logger にも自分の handler を付けるので、テストでは起きない
+_output_log.addHandler(logging.NullHandler())
+
+
+class _ConsoleLogHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = self.format(record)
+            if record.levelno >= logging.ERROR:
+                err_console.print(_styled("Error:", "red", f" {message}"))
+            elif record.levelno >= logging.WARNING:
+                err_console.print(_styled("Warning:", "yellow", f" {message}"))
+            else:
+                err_console.print(Text(f"  {message}", style="dim"))
+        except Exception:  # noqa: BLE001 - logging の流儀で、出力の失敗で処理を止めない
+            self.handleError(record)
+
+
+class _LogFileHandler(logging.FileHandler):
+    """書けなくなったら(ディスクの空きがないなど)、1 回だけ知らせて以後は書かない。取得や反映は続ける。
+
+    logging の既定では、書けなかったレコードごとにトレースバックを標準エラーに出し、進捗の行が読めなくなるため。
+    """
+
+    _broken = False
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if not self._broken:
+            super().emit(record)
+
+    def handleError(self, record: logging.LogRecord) -> None:
+        if not self._broken:
+            self._broken = True
+            err_console.print(_styled("Warning:", "yellow", f" Stopped writing the log file: {sys.exc_info()[1]}"))
+
+    def close(self) -> None:
+        try:
+            super().close()
+        except OSError:
+            # 書けなかった残りを閉じる前に flush し、同じ失敗がもう一度起きる。本来の終了コードを置き換えないよう抑える
+            pass
+
+
+@contextmanager
+def _logging(verbose: bool, log_file: str | None) -> Iterator[None]:
+    """-v なしでは WARNING 以上(429 の待ちなど)だけを端末に出す。ログファイルには INFO 以上と端末に出した行を書く。"""
+    console_handler = _ConsoleLogHandler(logging.INFO if verbose else logging.WARNING)
+    file_handler = None
+    if log_file:
+        try:
+            # 追記する。中断して再開した回も同じファイルに続けて残す
+            file_handler = _LogFileHandler(log_file, encoding="utf-8")
+        except OSError as e:
+            _print_error(f"Cannot open the log file: {e}")
+            raise typer.Exit(1)
+        file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    attached = [(_logger, console_handler)]
+    if file_handler is not None:
+        attached += [(_logger, file_handler), (_output_log, file_handler)]
+    previous_level = _logger.level
+    _logger.setLevel(logging.INFO)
+    for logger, handler in attached:
+        logger.addHandler(handler)
+    try:
+        yield
+    except typer.Exit:
+        raise
+    except (DatabaseLockedError, EnrichLockedError) as e:
+        # 端末には _report_locked_db が出す。ログファイルにも、止まった理由を残す
+        _output_log.error("%s", e)
+        raise
+    except Exception:
+        # 端末には typer がトレースバックを出す。ログファイルにも残す
+        _output_log.exception("Stopped by an unexpected error")
+        raise
+    finally:
+        for logger, handler in attached:
+            logger.removeHandler(handler)
+        if file_handler is not None:
+            file_handler.close()
+        _logger.setLevel(previous_level)
+
+
+def _say(line: str | Text, *, err: bool = False, level: int = logging.INFO, soft_wrap: bool | None = None) -> None:
+    """端末に出し、--log-file があればそこにも残す。"""
+    (err_console if err else console).print(line, soft_wrap=soft_wrap)
+    _output_log.log(level, "%s", line.plain if isinstance(line, Text) else line)
+
+
+def _say_warning(message: str) -> None:
+    err_console.print(_styled("Warning:", "yellow", f" {message}"))
+    _output_log.warning("%s", message)
+
+
+def _say_error(message: str) -> None:
+    _print_error(message)
+    _output_log.error("%s", message)
+
+
+def _log_file_option() -> Optional[str]:
+    return typer.Option(
+        None,
+        "--log-file",
+        callback=_reject_empty_path,
+        help="Also append the output and the --verbose details, with timestamps, to this file",
     )
 
 
@@ -395,29 +512,29 @@ def _ndl_client(interval: float) -> NdlClient:
 
 class _ConsoleReporter(Reporter):
     def start(self, targets: int, interval: float) -> None:
-        console.print(
+        _say(
             f"Fetching {targets} books from NDL Search, one request every {interval:g}s or more. "
             "Press Ctrl-C to stop; progress is saved and the next run resumes."
         )
 
     def book(self, index: int, total: int, target: Target, result: FetchResult) -> None:
-        outcome = result.status
-        if result.match is not None:
-            outcome += f" ({result.match.method})"
-        line = Text.assemble((f"[{index}/{total}] ", "dim"), f"{target.book.asin} {outcome} {target.book.title}")
+        line = Text.assemble(
+            (f"[{index}/{total}] ", "dim"), f"{target.book.asin} {result.outcome} {target.book.title}"
+        )
         if result.error:
             line.append(f" - {result.error}", style="red")
-        console.print(line, soft_wrap=True)
+        # ログファイルで失敗した本を探せるよう、通信に失敗した行は WARNING で残す
+        _say(line, level=logging.WARNING if result.error else logging.INFO, soft_wrap=True)
 
     def waiting_for_lock(self) -> None:
-        err_console.print("Database is in use by another process; waiting to write...")
+        _say("Database is in use by another process; waiting to write...", err=True)
 
     def resuming(self, started_at: object, skipped: int) -> None:
-        console.print(f"Resuming the refetch started at {started_at}; skipping {skipped} books already refetched.")
+        _say(f"Resuming the refetch started at {started_at}; skipping {skipped} books already refetched.")
 
     def discarding(self, mode: str, where: str, started_at: object) -> None:
         scope = f"--{mode.replace('_', '-')}" + (f" --where {where!r}" if where else "")
-        console.print(f"Discarding the unfinished refetch ({scope}, started at {started_at}); starting over.")
+        _say(f"Discarding the unfinished refetch ({scope}, started at {started_at}); starting over.")
 
 
 @app.command()
@@ -443,6 +560,10 @@ def enrich(
     interval: float = typer.Option(
         DEFAULT_INTERVAL, "--interval", min=DEFAULT_INTERVAL, help="Seconds between requests to NDL Search"
     ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Also show each request to NDL Search and each database save (on stderr)"
+    ),
+    log_file: Optional[str] = _log_file_option(),
     db: Optional[str] = _db_option(),
 ) -> None:
     """Fetch bibliographic data from NDL Search and match it to books."""
@@ -450,8 +571,8 @@ def enrich(
         # nan は「3.0 未満」の検査を通り、待ち時間なしで問い合わせてしまう
         raise typer.BadParameter("must be a finite number of seconds", param_hint="--interval")
     db_path = _require_db(db)
-    try:
-        summary = run_enrich(
+    with _logging(verbose, log_file):
+        _run_enrich_command(
             db_path,
             _ndl_client(interval),
             where=where,
@@ -459,41 +580,42 @@ def enrich(
             overrides_path=Path(overrides) if overrides else None,
             retry_missing=retry_missing,
             refresh=refresh,
-            reporter=_ConsoleReporter(),
         )
+
+
+def _run_enrich_command(db_path: Path, client: NdlClient, **options: object) -> None:
+    try:
+        summary = run_enrich(db_path, client, reporter=_ConsoleReporter(), **options)
     except (FileNotFoundError, ValueError) as e:
-        _print_error(str(e))
+        _say_error(str(e))
         raise typer.Exit(1)
 
     if summary.overrides is not None:
         changes = summary.overrides
-        console.print(
+        _say(
             f"Overrides: {changes.total} rows saved; {len(changes.reset)} books reset, "
             f"{len(changes.excluded)} books excluded."
         )
         if changes.unknown_asins:
-            unknown = ", ".join(changes.unknown_asins)
-            err_console.print(_styled("Warning:", "yellow", f" overrides for ASINs not in the library: {unknown}"))
+            _say_warning(f"overrides for ASINs not in the library: {', '.join(changes.unknown_asins)}")
     counts = ", ".join(f"{status} {count}" for status, count in sorted(summary.counts.items()))
-    console.print(f"Fetched {summary.fetched} of {summary.targets} books" + (f": {counts}." if counts else "."))
+    _say(f"Fetched {summary.fetched} of {summary.targets} books" + (f": {counts}." if counts else "."))
     if summary.interrupted:
-        err_console.print(_styled("Interrupted.", "yellow", " Saved the books fetched so far; rerun to resume."))
+        line = _styled("Interrupted.", "yellow", " Saved the books fetched so far; rerun to resume.")
+        _say(line, err=True, level=logging.WARNING)
         raise typer.Exit(130)
     if summary.aborted == "retry_later":
-        _print_error(
+        _say_error(
             f"NDL Search asked to wait {summary.retry_after:.0f} seconds. "
             "Stopped and saved the books fetched so far; retry after that."
         )
         raise typer.Exit(1)
     if summary.aborted:
-        _print_error(
-            "Stopped after repeated failures to reach NDL Search. Saved the books fetched so far; retry later."
-        )
+        _say_error("Stopped after repeated failures to reach NDL Search. Saved the books fetched so far; retry later.")
         raise typer.Exit(1)
     failed = summary.counts.get("error", 0)
     if failed:
-        message = f" {failed} books could not be fetched from NDL Search; rerun the same command to retry them."
-        err_console.print(_styled("Warning:", "yellow", message))
+        _say_warning(f"{failed} books could not be fetched from NDL Search; rerun the same command to retry them.")
 
 
 @app.command()
@@ -520,28 +642,36 @@ def fix(
     ),
     port: int = typer.Option(0, "--port", min=0, max=65535, help="Port on 127.0.0.1 (0 = any free port)"),
     no_browser: bool = typer.Option(False, "--no-browser", help="Print the URL without opening a browser"),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Also show each page request, each book applied, and each request to NDL Search (on stderr)",
+    ),
+    log_file: Optional[str] = _log_file_option(),
 ) -> None:
     """Open a local web page to fix bibliographic matches by hand."""
     db_path = _require_db(db)
     csv_path = resolve_overrides_path(db_path, overrides)
-    try:
-        # 壊れた CSV を UI で上書きして手書きの行を失わないよう、起動時に読めることを確かめる
-        load_current_overrides(csv_path, db_path)
-        server = FixServer(("127.0.0.1", port), db_path, csv_path, lambda: _ndl_client(DEFAULT_INTERVAL))
-    except (ValueError, OSError) as e:
-        _print_error(str(e))
-        raise typer.Exit(1)
-    console.print(f"Serving the fix page at {server.url}", soft_wrap=True)
-    console.print(f"Overrides CSV: {csv_path}", soft_wrap=True)
-    console.print("Press Ctrl-C to stop.")
-    if not no_browser:
-        webbrowser.open(server.url)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        console.print("Stopped.")
-    finally:
-        server.server_close()
+    with _logging(verbose, log_file):
+        try:
+            # 壊れた CSV を UI で上書きして手書きの行を失わないよう、起動時に読めることを確かめる
+            load_current_overrides(csv_path, db_path)
+            server = FixServer(("127.0.0.1", port), db_path, csv_path, lambda: _ndl_client(DEFAULT_INTERVAL))
+        except (ValueError, OSError) as e:
+            _say_error(str(e))
+            raise typer.Exit(1)
+        _say(f"Serving the fix page at {server.url}", soft_wrap=True)
+        _say(f"Overrides CSV: {csv_path}", soft_wrap=True)
+        _say("Press Ctrl-C to stop.")
+        if not no_browser:
+            webbrowser.open(server.url)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            _say("Stopped.")
+        finally:
+            server.server_close()
 
 
 @app.command()

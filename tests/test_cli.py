@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import subprocess
 import sys
@@ -622,6 +623,137 @@ def test_enrich_prints_progress_and_summary(imported_db: Path, monkeypatch: pyte
     assert re.search(r"Bib status: not_found\W+4\b", status.stdout)
     assert re.search(r"Bib match: edition\W+1\b", status.stdout)
     assert re.search(r"Bib not fetched\W+0\b", status.stdout)
+
+
+def test_enrich_verbose_shows_each_request_and_save_on_stderr(
+    imported_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_ndl(monkeypatch)
+    result = runner.invoke(app, ["enrich", "-v", "--limit", "1", "--db", str(imported_db)])
+    assert result.exit_code == 0, result.output
+    assert '  NDL Search title="テストの本" creator="山田太郎": 1 hits (0.0s)\n' in result.stderr
+    assert "  Saved 1 books to the database\n" in result.stderr
+    # 1 冊ごとの結果は標準出力のまま。詳細は標準出力に混ぜない
+    assert "[1/1] B000TEST01 found (edition) テストの本" in result.stdout
+    assert "NDL Search title=" not in result.stdout and "Saved" not in result.stdout
+
+
+def test_enrich_shows_429_waits_without_verbose(imported_db: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ndl = FakeOpenSearch([({"title": "テストの本", "creator": "山田太郎"}, http_error(429, retry_after="7"))])
+    monkeypatch.setattr("kindb.cli._ndl_client", lambda interval: ndl.client())
+    result = runner.invoke(app, ["enrich", "--limit", "1", "--db", str(imported_db)])
+    assert result.exit_code == 0, result.output
+    assert "Warning: NDL Search returned HTTP 429; retrying in 7s (1/3)\n" in result.stderr
+    assert "NDL Search title=" not in result.stderr and "Saved" not in result.stderr
+
+
+def test_enrich_log_file_appends_the_output_and_details_with_timestamps(
+    imported_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ndl = _fake_ndl(monkeypatch)
+    log = tmp_path / "enrich.log"
+    argv = ["enrich", "--limit", "1", "--log-file", str(log), "--db", str(imported_db)]
+    # pytest も propagate しない logger に自分の handler を付けるので、実行の前後で比べる
+    handlers_before = [list(logging.getLogger(name).handlers) for name in ("kindb", "kindb.output")]
+    assert runner.invoke(app, argv).exit_code == 0
+
+    def fail(count: int) -> None:
+        raise http_error(500)
+
+    ndl.on_call = fail
+    result = runner.invoke(app, argv)
+    assert result.exit_code == 0, result.output
+
+    lines = log.read_text(encoding="utf-8").splitlines()
+    assert all(re.match(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} (INFO|WARNING) ", line) for line in lines), lines
+    text = "\n".join(line.split(" ", 2)[2] for line in lines)
+    # 2 回目の実行も同じファイルに続けて書く。-v なしでも詳細を残す
+    assert "INFO Fetching 1 books from NDL Search" in text
+    assert 'INFO NDL Search title="テストの本" creator="山田太郎": 1 hits (0.0s)' in text
+    assert "INFO [1/1] B000TEST01 found (edition) テストの本" in text
+    assert "INFO Saved 1 books to the database" in text
+    assert "INFO Fetched 1 of 1 books: found 1." in text
+    # 通信に失敗した本は WARNING で残し、あとから探せるようにする
+    assert "WARNING [1/1] B000TEST02 error Another Book - HTTP 500 from NDL Search" in text
+    assert "WARNING 1 books could not be fetched from NDL Search; rerun the same command to retry them." in text
+    # 端末の出力は -v なしのまま
+    assert "NDL Search title=" not in result.stderr
+    # 次のコマンドに handler を持ち越さない
+    assert [logging.getLogger(name).handlers for name in ("kindb", "kindb.output")] == handlers_before
+
+
+def test_enrich_reports_a_log_file_that_cannot_be_opened(imported_db: Path, tmp_path: Path) -> None:
+    result = runner.invoke(
+        app, ["enrich", "--log-file", str(tmp_path / "missing" / "enrich.log"), "--db", str(imported_db)]
+    )
+    assert result.exit_code == 1
+    assert result.stderr.startswith("Error: Cannot open the log file: ")
+    assert "Fetching" not in result.stdout
+
+
+def test_errors_are_shown_once_without_a_log_file(imported_db: Path, tmp_path: Path) -> None:
+    # ログファイル用の logger に handler がないと、logging.lastResort が同じ行を標準エラーにもう一度出す。
+    # pytest の logging プラグインは propagate しない logger にも handler を付けて隠すので、別のプロセスで確かめる
+    result = subprocess.run(
+        [sys.executable, "-c", "from kindb.cli import app; app()",
+         "enrich", "--overrides", str(tmp_path / "missing.csv"), "--db", str(imported_db)],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 1
+    assert result.stderr.startswith("Error: Overrides CSV not found: ")
+    assert result.stderr.count("\n") == 1, result.stderr
+
+
+def test_log_file_records_an_unexpected_error(
+    imported_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("kindb.cli.run_enrich", broken)
+    log = tmp_path / "enrich.log"
+    result = runner.invoke(app, ["enrich", "--log-file", str(log), "--db", str(imported_db)])
+    assert isinstance(result.exception, RuntimeError)
+    text = log.read_text(encoding="utf-8")
+    assert " ERROR Stopped by an unexpected error\nTraceback" in text and "RuntimeError: boom" in text
+
+
+def test_log_file_that_stops_accepting_writes_is_reported_once(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # ディスクの空きがなくなったときなど。レコードごとにトレースバックを出さず、取得も止めない
+    from kindb.cli import _LogFileHandler
+
+    class Full:
+        def write(self, text: str) -> None:
+            raise OSError(28, "No space left on device")
+
+        def flush(self) -> None:
+            raise OSError(28, "No space left on device")
+
+        def close(self) -> None:
+            raise OSError(28, "No space left on device")
+
+    handler = _LogFileHandler(tmp_path / "x.log", encoding="utf-8")
+    handler.stream.close()
+    handler.stream = Full()
+    logger = logging.getLogger("kindb.test_full_disk")
+    logger.addHandler(handler)
+    try:
+        logger.warning("one")
+        logger.warning("two")
+    finally:
+        logger.removeHandler(handler)
+    handler.close()
+    err = capsys.readouterr().err
+    assert err == "Warning: Stopped writing the log file: [Errno 28] No space left on device\n"
+
+
+@pytest.mark.parametrize("command", ["enrich", "fix"])
+def test_empty_log_file_is_rejected(imported_db: Path, command: str) -> None:
+    result = runner.invoke(app, [command, "--log-file", "", "--db", str(imported_db)])
+    assert result.exit_code == 2
+    assert "--log-file" in result.output
 
 
 def test_status_counts_unfetched_books_before_enrich(imported_db: Path) -> None:

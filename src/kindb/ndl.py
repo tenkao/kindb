@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import http.client
 import importlib.metadata
+import logging
 import re
 import time
 import urllib.error
@@ -16,6 +17,8 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from typing import Callable
+
+logger = logging.getLogger(__name__)
 
 BASE_URL = "https://ndlsearch.ndl.go.jp/api/opensearch"
 # NDL 自身の書誌だけを引く。JPRO の電子書籍や、同じ紙版でも内容の食い違うほかの提供元の書誌を除ける
@@ -230,7 +233,16 @@ class NdlClient:
     def search(self, params: dict[str, str]) -> SearchResponse:
         query = {"dpid": DPID, **params, "cnt": str(MAX_RESULTS)}
         url = f"{BASE_URL}?{urllib.parse.urlencode(query)}"
-        return parse_response(self._get(url))
+        conditions = " ".join(f'{key}="{value}"' for key, value in params.items())
+        try:
+            body, elapsed = self._get(url)
+            response = parse_response(body)
+        except NdlError as e:
+            # 1 冊で何回も引くので、どの条件で失敗したかを残す。失敗そのものは本の行が出す
+            logger.info("NDL Search %s: %s", conditions, e)
+            raise
+        logger.info("NDL Search %s: %d hits (%.1fs)", conditions, response.total, elapsed)
+        return response
 
     def _wait_for_interval(self) -> None:
         if self._last_request is None:
@@ -239,19 +251,27 @@ class NdlClient:
         if remaining > 0:
             self._sleep(remaining)
 
-    def _get(self, url: str) -> str:
+    def _get(self, url: str) -> tuple[str, float]:
+        """本文と、応答にかかった秒数(間隔と 429 の待ちを除く)を返す。"""
         for attempt in range(MAX_429_RETRIES + 1):
             self._wait_for_interval()
             try:
                 self.request_count += 1
-                return self._fetch(url, self._user_agent)
+                started = self._clock()
+                body = self._fetch(url, self._user_agent)
+                return body, self._clock() - started
             except urllib.error.HTTPError as e:
                 wait = _retry_after_seconds(e.headers.get("Retry-After") if e.headers else None)
                 if e.code == 429 and wait is not None and wait > MAX_RETRY_AFTER:
                     raise NdlRetryLater(wait) from e
                 if e.code != 429 or attempt == MAX_429_RETRIES:
                     raise NdlError(f"HTTP {e.code} from NDL Search") from e
-                self._sleep(wait if wait is not None else 60.0 * (attempt + 1))
+                wait = wait if wait is not None else 60.0 * (attempt + 1)
+                # 何も出さずに数分止まると、動いているのか分からないため、-v なしでも出す
+                logger.warning(
+                    "NDL Search returned HTTP 429; retrying in %.0fs (%d/%d)", wait, attempt + 1, MAX_429_RETRIES
+                )
+                self._sleep(wait)
             except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as e:
                 # 応答の途中で切れた接続(IncompleteRead)は OSError ではなく HTTPException として来る
                 raise NdlError(f"Could not reach NDL Search: {e}") from e
