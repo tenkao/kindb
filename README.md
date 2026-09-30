@@ -65,7 +65,8 @@ kindb recent          # 最近ライブラリに入った本(既定 20 冊、-n 
 
 ```bash
 # 非マンガから取得する(件名が付くのはほぼ非マンガのため)。まず 50 冊で試す
-kindb enrich --where "NOT list_contains(genres, 'コミック・ラノベ・BL')" --limit 50
+# マンガのジャンルは「コミック・ラノベ・BL」だけとは限らない。ジャンルが空の本はマンガかどうか分からないので外す
+kindb enrich --where "len(genres) > 0 AND NOT list_has_any(genres, ['コミック・ラノベ・BL', '少年マンガ', '青年マンガ', '女性マンガ', '少女マンガ', 'インディーズマンガ'])" --limit 50
 kindb enrich                        # 残りの全冊。何度実行しても、取得済みの本は飛ばして続きから引く
 kindb enrich --retry-missing        # 見つからなかった本と、保留した本も引き直す
 kindb enrich --where "bib_status = 'error'"   # --where は v_books の列で絞る。bib_status は取得の状態
