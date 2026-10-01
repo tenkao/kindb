@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import html
 import json
 import re
 import tempfile
@@ -150,11 +151,13 @@ def _insert_rows(con: duckdb.DuckDBPyConnection, rows: list[dict[str, Any]], imp
     author_values = []
     for row in rows:
         asin = row["asin"]
-        authors_text = row["authors"]
+        # 拡張は書名を HTML の実体参照のまま書き出す(I”s&lt;アイズ&gt;)。表示と NDL の検索語のために戻す。
+        # 実データで生の & や < はなく、実体参照のない文字列は変わらない。著者に実例はないが同じ出どころなので揃える
+        authors_text = html.unescape(row["authors"])
         book_values.append(
             (
                 asin,
-                row["title"],
+                html.unescape(row["title"]),
                 authors_text,
                 _acquired_time_to_datetime(row["acquiredTime"]),
                 row["readStatus"],

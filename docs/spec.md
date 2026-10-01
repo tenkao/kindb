@@ -36,6 +36,7 @@ kindb の現行仕様と、その設計判断の理由をまとめる。DDL と�
 
 変換規則:
 
+- `title` と `authors` の HTML の実体参照(`&lt;` `&gt;` `&amp;` など)を文字に戻す。拡張が書名を実体参照のまま書き出し(実データで 13 冊)、表示が崩れるうえ、NDL の検索語が「I s lt アイズ gt」になって見つからないため。
 - `acquiredTime` は Python 側で UTC に固定変換し、タイムゾーンなしの `TIMESTAMP` として保存する。DuckDB の `to_timestamp` はセッションのタイムゾーンに依存するため使わない。
 - `authors` は `", "` で分割し、前後の空白を除いて空要素を捨て、出現順に `author_order` を 1 から振る。実データの最大は 8 著者で、`Last, First` 形式の単独著者は存在しないため、単純分割で安全に扱える。
 - `productImage` の空文字列は NULL にする。

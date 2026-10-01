@@ -357,6 +357,27 @@ def test_empty_author_elements_are_skipped(tmp_path: Path) -> None:
         con.close()
 
 
+def test_html_entities_in_title_and_authors_are_unescaped(tmp_path: Path) -> None:
+    json_path = create_kindle_json(
+        tmp_path / "entities.json",
+        [_book("B000ENT001", "I”s&lt;アイズ&gt; 1 (ジャンプコミックスDIGITAL)", authors="Tom &amp; Jerry, B")],
+    )
+    db = tmp_path / "entities.duckdb"
+    import_kindle_json(json_path, db)
+    con = connect(db, read_only=True)
+    try:
+        assert con.execute("SELECT title, authors_text FROM books").fetchone() == (
+            "I”s<アイズ> 1 (ジャンプコミックスDIGITAL)",
+            "Tom & Jerry, B",
+        )
+        assert con.execute("SELECT author_name FROM book_authors ORDER BY author_order").fetchall() == [
+            ("Tom & Jerry",),
+            ("B",),
+        ]
+    finally:
+        con.close()
+
+
 def test_v_books_one_row_per_asin_and_authors_order(imported_db: Path) -> None:
     con = connect(imported_db, read_only=True)
     try:
