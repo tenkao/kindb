@@ -172,7 +172,7 @@ def test_volume_must_match_when_kindle_title_has_one() -> None:
     assert not is_adoptable(book, record(title="理想のヒモ生活"))
 
 
-@pytest.mark.parametrize("ndl_volume", ["no.26", "NO.26", "Vol. 26", "第26集", "26巻", "026"])
+@pytest.mark.parametrize("ndl_volume", ["no.26", "NO.26", "Vol. 26", "第26集", "26巻", "026", "file 26"])
 def test_volume_notation_variants_are_compared_by_number(ndl_volume: str) -> None:
     assert is_adoptable(_book("HUNTER×HUNTER 26"), record(title="Hunter×hunter", volume=ndl_volume))
 

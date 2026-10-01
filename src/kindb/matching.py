@@ -64,9 +64,10 @@ _KANJI_DIGITS = {"〇": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "�
 _KANJI_NUMBER = "[〇一二三四五六七八九十]+"
 _ENCLOSED = r"[―—‐~～〜-][^―—‐~～〜-]+[―—‐~～〜-]"
 _VOLUME_WORD = "|".join(sorted([*VOLUME_WORDS, *_VOLUME_WORD_ALIASES], key=len, reverse=True))
-# 括弧の中や候補の巻に書かれる、1 つの巻を表す形(3、三、第2巻、Vol.2、その2、no.26、第1集)
+# 括弧の中や候補の巻に書かれる、1 つの巻を表す形(3、三、第2巻、Vol.2、その2、no.26、第1集、file 10)。
+# file は NDL が悟空道の巻を「file 10」と書くため
 _VOLUME_TOKEN = re.compile(
-    rf"^(?:(?:第|no\.?|vol\.?|v\.|volume|part|その)\s*)?(\d+|{_KANJI_NUMBER})\s*(?:巻|集|号)?$", re.IGNORECASE
+    rf"^(?:(?:第|no\.?|vol\.?|v\.|volume|part|file|その)\s*)?(\d+|{_KANJI_NUMBER})\s*(?:巻|集|号)?$", re.IGNORECASE
 )
 # 書名の末尾から巻数を探す順。見つかった最初の 1 つを使う。2 つ目の値は巻数の書き方の種類で、
 # "bare"(括弧のない末尾の数字やローマ数字)だけは、書名の一部と読む解釈も残す(「ジ・アート・オブ Fallout 4」)
