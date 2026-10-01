@@ -82,8 +82,13 @@ _KINDLE_VOLUME_PATTERNS = (
     (re.compile(rf"(?<=[^\sA-Za-z])(I|II|III|IV|V|VI|VII|VIII|IX|X)\s*(?={_ENCLOSED}$)"), "subtitle"),
     (re.compile(r"\s(I|II|III|IV|V|VI|VII|VIII|IX|X)$"), "bare"),
     (re.compile(rf"\s({_KANJI_NUMBER})$"), "bare"),
+    # 「気になってる人が男じゃなかった VOL.1【電子特典付き】」。数字の前の「.」で、下の形では読めない
+    (re.compile(r"\s((?:vol|no)\.\s*\d+)$", re.IGNORECASE), "word"),
     # 「…PART2」のように文字の直後に付いた数字。小数(2.5)の一部は巻数にしない
     (re.compile(r"(?<=[^\d\s.])(\d+)$"), "bare"),
+    # 「サピエンス全史 上 文明の構造と人類の幸福」「人体六〇〇万年史 上──科学が…」のように、本タイトルと副題の間に
+    # 単独で置いた上下。空白か罫線で区切られたものだけを読み、語の一部(天上)は読まない
+    (re.compile(r"\s(上巻|中巻|下巻|上|中|下)(?=\s|[─―—])"), "word"),
     # 「ファスト＆スロー（上） あなたの意思は…」「…（４）〈電子特別版〉」のように、巻数のあとに書名が続くもの。
     # 末尾の形より後に試す
     (re.compile(r"\(([^()]*)\)"), "paren"),

@@ -44,6 +44,11 @@ def _book(title: str, authors: str = "著者", series_title: str | None = None) 
         ("ゲームメカニクス大全 第2版 ボードゲームに学ぶ「おもしろさ」の仕掛け", None, (), ("第2版",)),
         ("ファスト＆スロー（上） (早川書房)", "上", ("早川書房",), ()),
         ("星界の紋章　２―ささやかな戦い―", "2", (), ()),
+        ("気になってる人が男じゃなかった VOL.1【電子特典付き】 (コミックエッセイ)", "1", ("コミックエッセイ",), ()),
+        ("サピエンス全史　上　文明の構造と人類の幸福 (河出文庫)", "上", ("河出文庫",), ()),
+        ("人体六〇〇万年史 下──科学が明かす進化・健康・疾病 (早川書房)", "下", ("早川書房",), ()),
+        # 語の一部の「上」は巻数にしない
+        ("天上 天下 (コミックス)", None, ("コミックス",), ()),
     ],
 )
 def test_parse_kindle_title_splits_volume_labels_and_editions(
@@ -51,6 +56,12 @@ def test_parse_kindle_title_splits_volume_labels_and_editions(
 ) -> None:
     parsed = parse_kindle_title(title)
     assert (parsed.volume, parsed.labels, parsed.editions) == (volume, labels, editions)
+
+
+def test_volume_word_between_title_and_subtitle_matches_ndl_volume() -> None:
+    book = _book("人体六〇〇万年史 上──科学が明かす進化・健康・疾病 (早川書房)")
+    assert is_adoptable(book, record(title="人体六〇〇万年史 : 科学が明かす進化・健康・疾病", volume="上"))
+    assert not is_adoptable(book, record(title="人体六〇〇万年史 : 科学が明かす進化・健康・疾病", volume="下"))
 
 
 def test_parse_kindle_title_drops_trailing_series_name_and_reads_roman_volume() -> None:
