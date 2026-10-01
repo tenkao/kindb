@@ -64,6 +64,24 @@ def test_volume_word_between_title_and_subtitle_matches_ndl_volume() -> None:
     assert not is_adoptable(book, record(title="人体六〇〇万年史 : 科学が明かす進化・健康・疾病", volume="下"))
 
 
+@pytest.mark.parametrize(
+    ("title", "series_title", "key", "volume"),
+    [
+        # 版表記を先に除くので、シリーズ名「敷居の住人 新装版」とは比べられない
+        ("敷居の住人　新装版　１ 敷居の住人 新装版 (ビームコミックス)", "敷居の住人 新装版", "敷居の住人", "1"),
+        ("ヘヴンズ ドア　小池桂一 Extra Works ヘヴンズ ドア 小池桂一 Extra Works (ビームコミックス)", None,
+         "ヘヴンズドア小池桂一extraworks", None),
+        # 先頭の語の繰り返しでない末尾の語は外さない
+        ("ワンダーランド 不思議の国 ランド", None, "ワンダランド不思議の国ランド", None),
+    ],
+)
+def test_parse_kindle_title_drops_the_repeated_title_at_the_end(
+    title: str, series_title: str | None, key: str, volume: str | None
+) -> None:
+    parsed = parse_kindle_title(title, series_title)
+    assert (parsed.key, parsed.volume) == (key, volume)
+
+
 def test_parse_kindle_title_drops_trailing_series_name_and_reads_roman_volume() -> None:
     parsed = parse_kindle_title("星界の断章 Ⅰ 星界シリーズ (ハヤカワ文庫JA)", series_title="星界シリーズ")
     assert parsed.key == "星界の断章"

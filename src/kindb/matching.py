@@ -177,6 +177,21 @@ def _plain_key(text: str) -> str:
     return _NON_WORD.sub("", nfkc(text)).replace("ー", "").casefold()
 
 
+def _drop_repeated_title(text: str) -> str:
+    """書名の末尾に付いた、先頭の語の繰り返しを外す(「敷居の住人 新装版 1 敷居の住人 新装版」)。
+
+    2026-09 の拡張の書き出しから、一部の本の書名の末尾に作品名がもう一度付く。シリーズ名と同じなら上で外れるが、
+    版表記を先に除くので「敷居の住人 新装版」と比べられない本や、シリーズ名のない本が残る。末尾の語が書名の先頭の
+    語と同じときだけ外すので、繰り返しのない書名は変わらない。
+    """
+    words = text.split()
+    for i in range(1, len(words)):
+        tail = _plain_key(" ".join(words[i:]))
+        if tail and any(_plain_key(" ".join(words[:j])) == tail for j in range(1, i + 1)):
+            return " ".join(words[:i])
+    return text
+
+
 def _kanji_number(text: str) -> int | None:
     if not text or any(c not in _KANJI_DIGITS and c != "十" for c in text):
         return None
@@ -256,6 +271,8 @@ def parse_kindle_title(
         if name_key and stripped:
             text = stripped
             break
+    else:
+        text = _drop_repeated_title(text)
 
     volume = whole_key = key_without_volume_subtitle = None
     for pattern, kind in _KINDLE_VOLUME_PATTERNS:
