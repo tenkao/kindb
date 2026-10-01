@@ -117,6 +117,43 @@ def test_kindle_subtitle_absent_from_ndl_is_not_matched() -> None:
     assert not is_adoptable(book, record(title="詳細!SwiftUI iPhoneアプリ開発入門ノート"))
 
 
+@pytest.mark.parametrize(
+    ("kindle_title", "ndl_title"),
+    [
+        (
+            "200万人の「挫折」と「成功」のデータからわかった 継続する技術",
+            "継続する技術 : 200万人の「挫折」と「成功」のデータからわかった",
+        ),
+        ("九井諒子作品集 竜のかわいい七つの子 (HARTA COMIX)", "竜のかわいい七つの子 : 九井諒子作品集"),
+        # 副題が 2 つある書誌の並べ替え
+        ("稗田のモノ語り　魔障ヶ岳　妖怪ハンター", "魔障ヶ岳 : 妖怪ハンター : 稗田のモノ語り"),
+    ],
+)
+def test_subtitle_placed_before_the_main_title_matches(kindle_title: str, ndl_title: str) -> None:
+    assert is_adoptable(_book(kindle_title), record(title=ndl_title))
+
+
+@pytest.mark.parametrize(
+    ("kindle_title", "ndl_title"),
+    [
+        # 本タイトルを含まない並べ替え(副題だけ)では一致とみなさない
+        ("妖怪ハンター 稗田のモノ語り", "魔障ヶ岳 : 妖怪ハンター : 稗田のモノ語り"),
+        # 途中の副題を飛ばした並べ替えも採らない
+        ("稗田のモノ語り 魔障ヶ岳", "魔障ヶ岳 : 妖怪ハンター : 稗田のモノ語り"),
+        # 並べ替えても前方一致や包含は同じ作品とみなさない
+        ("200万人のデータからわかった 継続する技術", "継続する技術 : 200万人の「挫折」と「成功」のデータからわかった"),
+    ],
+)
+def test_reordered_title_still_needs_the_whole_title(kindle_title: str, ndl_title: str) -> None:
+    assert not is_adoptable(_book(kindle_title), record(title=ndl_title))
+
+
+def test_reordered_title_still_needs_the_same_volume() -> None:
+    book = _book("コミック版　100円のコーラを1000円で売る方法２")
+    assert not is_adoptable(book, record(title="100円のコーラを1000円で売る方法 : コミック版"))
+    assert is_adoptable(book, record(title="100円のコーラを1000円で売る方法 : コミック版", volume="2"))
+
+
 def test_reading_and_ruby_are_ignored_on_both_sides() -> None:
     book = _book("救世主《メシア》～異世界を救った元勇者が魔物のあふれる現実世界を無双する～ 7")
     candidate = record(title="救世主《メシア》 : 異世界を救った元勇者が魔物のあふれる現実世界を無双する", volume="7")

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import itertools
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -405,6 +406,10 @@ def _title_parts(record: NdlRecord) -> list[str]:
     return title.split(" : ")
 
 
+# 副題の数が多い書誌で並べ替えの数が増えすぎないための上限。実データで並べ替えが要った書誌は 3 部まで
+_MAX_REORDERED_PARTS = 4
+
+
 def _title_variants(record: NdlRecord, volume: _CandidateVolume) -> tuple[set[str], set[str]]:
     """候補の書名の比較用の形。(本タイトルか、本タイトルに副題を前から順に足したもの, それに巻の副題を足したもの)。
 
@@ -414,6 +419,13 @@ def _title_variants(record: NdlRecord, volume: _CandidateVolume) -> tuple[set[st
     parts = _title_parts(record)
     first = 1 if len(parts) > 1 and _is_derived_work_subtitle(parts[1]) else 0
     plain = {k for k in (normalize_key(" : ".join(parts[: i + 1])) for i in range(first, len(parts))) if k}
+    # Kindle は副題を本タイトルの前に置くことがある(NDL「継続する技術 : 200万人の…」、Kindle「200万人の… 継続する
+    # 技術」)。先頭から続く部分(本タイトルを必ず含み、途中を飛ばさない)を並べ替えた形も、全体の完全一致でだけ比べる
+    if 2 <= len(parts) <= _MAX_REORDERED_PARTS:
+        for n in range(2, len(parts) + 1):
+            for order in itertools.permutations(parts[:n]):
+                if (key := normalize_key(" : ".join(order))):
+                    plain.add(key)
     with_volume = {k + volume.text for k in plain} if volume.text else set()
     return plain, with_volume
 
