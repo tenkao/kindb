@@ -162,6 +162,7 @@ td.nowrap { white-space: nowrap; }
   font-family: var(--mono);
 }
 .isbn-form input[aria-invalid="true"] { border-color: var(--bad); }
+.exclude-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .hint { font-size: 12.5px; color: var(--muted); }
 .hint.bad { color: var(--bad); }
 .override-box {
@@ -445,6 +446,7 @@ footer.tray {
     loadBooks();
     // 取り消した操作をした場所にフォーカスを戻す(候補の行の「選択」、ISBN 欄、訂正の取り消しボタン)
     if (!prev || prev.isbn === null) { focusById("override-remove"); return; }
+    if (prev.isbn === "") { focusById("exclude-btn"); return; }
     var pick = document.querySelector('[data-pick-isbn="' + prev.isbn + '"]');
     if (pick) pick.focus(); else focusById("isbn-input");
   }
@@ -611,6 +613,9 @@ footer.tray {
     var typed = staged && staged.isbn && !inCandidates
       ? el("div", { class: "override-box" }, [el("span", { text: "反映待ち: ISBN " + staged.isbn + " を指定" }), cancelButton()])
       : null;
+    // 紙版なしは ISBN の入力欄より上に置く。見つからない本の多くは Kindle だけの作品で、先に判断できるため
+    var exclude = excludeRow(book, staged, cancelButton);
+    if (exclude) pane.appendChild(el("section", { class: "block" }, [exclude]));
     pane.appendChild(el("section", { class: "block" }, [
       el("h3", { id: "isbn-heading", text: "ISBN を入力" }),
       el("p", { class: "hint", text: "ISBN を入力して指定します。反映時に入力した ISBN で NDL サーチを検索します。" }),
@@ -618,6 +623,22 @@ footer.tray {
       typed
     ]));
     pane.appendChild(candBlock);
+  }
+
+  // 紙版のない本(Kindle だけの作品など)を除外にする。除外済みの本は上の枠の「訂正を取り消す」で戻す
+  function excludeRow(book, staged, cancelButton) {
+    if (book.override && book.override.excluded) return null;
+    if (staged && staged.isbn === "") {
+      return el("div", { class: "override-box" }, [el("span", { text: "反映待ち: 紙版なし(照合しない)" }), cancelButton()]);
+    }
+    return el("div", { class: "exclude-row" }, [
+      el("button", {
+        type: "button", class: "btn ghost", id: "exclude-btn", text: "紙版なし(照合しない)",
+        disabled: state.busy ? "disabled" : null,
+        onclick: function () { stage(book.asin, "", book.title); }
+      }),
+      el("span", { class: "hint", text: "Kindle だけの作品など紙版がない本は、照合の対象から外します。要確認に出なくなり、以後の取得でも問い合わせません。" })
+    ]);
   }
 
   // --- 反映待ち ---
@@ -633,7 +654,7 @@ footer.tray {
       var s = state.staged[asin];
       list.appendChild(el("li", {}, [
         el("span", { class: "t", text: s.title }),
-        el("span", { class: "mono", text: s.isbn ? "ISBN " + s.isbn : "訂正の取り消し" }),
+        el("span", { class: "mono", text: s.isbn ? "ISBN " + s.isbn : s.isbn === "" ? "紙版なし" : "訂正の取り消し" }),
         el("button", {
           type: "button", class: "x", "aria-label": s.title + " の変更をキャンセル", text: "×",
           onclick: function () { unstage(asin); }
@@ -641,14 +662,16 @@ footer.tray {
       ]));
     });
     var byIsbn = asins.filter(function (a) { return state.staged[a].isbn; }).length;
-    var removals = asins.length - byIsbn;
+    var exclusions = asins.filter(function (a) { return state.staged[a].isbn === ""; }).length;
+    var removals = asins.length - byIsbn - exclusions;
     var parts = [];
     if (byIsbn) parts.push("ISBN の指定: " + byIsbn + " 冊(NDL サーチへの問い合わせ " + byIsbn + " 回)");
+    if (exclusions) parts.push("紙版なし: " + exclusions + " 冊(問い合わせなし)");
     if (removals) parts.push("訂正の取り消し: " + removals + " 冊(書名で再検索。1 冊あたり最大 6 回)");
     if (extra.length) parts.push("CSV で直接編集した未反映の訂正 " + extra.length + " 冊も合わせて反映します");
     document.getElementById("tray-title").textContent = asins.length ? "反映待ち " + asins.length + " 冊" : "反映待ち";
     document.getElementById("tray-summary").textContent = parts.length
-      ? parts.join("。") + "。問い合わせは 3 秒以上の間隔で送ります。" : "";
+      ? parts.join("。") + "。" + (byIsbn || removals || extra.length ? "問い合わせは 3 秒以上の間隔で送ります。" : "") : "";
     document.getElementById("apply").disabled = state.busy || (!asins.length && !extra.length);
   }
 
@@ -660,12 +683,14 @@ footer.tray {
     var asins = Object.keys(state.staged);
     var changes = {};
     asins.forEach(function (a) { changes[a] = state.staged[a].isbn; });
-    var requests = asins.length + state.pending.length;
+    var requests = asins.filter(function (a) { return state.staged[a].isbn !== ""; }).length + state.pending.length;
     state.busy = true;
     renderTray();
     var busy = document.getElementById("busy");
     busy.hidden = false;
-    busy.textContent = "NDL サーチに問い合わせ中です(" + requests + " 冊、" + (requests * 3) + " 秒以上かかります)…";
+    busy.textContent = requests
+      ? "NDL サーチに問い合わせ中です(" + requests + " 冊、" + (requests * 3) + " 秒以上かかります)…"
+      : "反映しています…";
     showBanner(null);
     api("/api/apply", { method: "POST", body: JSON.stringify({ changes: changes }) })
       .then(function (data) {
@@ -676,7 +701,7 @@ footer.tray {
         box.replaceChildren();
         box.hidden = false;
         var head = data.changed.length
-          ? "反映しました(再取得 " + data.fetched + " 冊)"
+          ? "反映しました(再取得 " + data.fetched + " 冊" + (data.excluded.length ? "、除外 " + data.excluded.length + " 冊" : "") + ")"
           : "CSV を保存しました。DB はすでに同じ内容のため、再取得はありません";
         box.appendChild(el("div", { class: "row" }, [
           el("strong", { text: head }),
@@ -685,7 +710,7 @@ footer.tray {
             onclick: function () { box.hidden = true; renderTray(); }
           })
         ]));
-        data.results.forEach(function (r) {
+        data.results.concat(data.excluded).forEach(function (r) {
           box.appendChild(el("div", { class: "row" }, [
             el("span", { text: r.title }),
             el("span", { class: "mono", text: statusLabel(r) })

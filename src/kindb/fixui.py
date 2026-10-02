@@ -234,6 +234,8 @@ def book_detail(db_path: Path, asin: str, overrides: dict[str, str | None]) -> d
 class ApplyResult:
     changed: list[str] = field(default_factory=list)
     results: list[dict[str, object]] = field(default_factory=list)
+    # 除外した本は NDL に問い合わせないので results に入らない。結果欄で確かめられるよう別に返す
+    excluded: list[dict[str, object]] = field(default_factory=list)
     fetched: int = 0
     failed: int = 0
     aborted: str | None = None
@@ -243,6 +245,7 @@ class ApplyResult:
         return {
             "changed": self.changed,
             "results": self.results,
+            "excluded": self.excluded,
             "fetched": self.fetched,
             "failed": self.failed,
             "aborted": self.aborted,
@@ -283,15 +286,16 @@ class _CollectingReporter(Reporter):
 def apply_changes(
     db_path: Path, csv_path: Path, changes: dict[str, object], client_factory: Callable[[], NdlClient]
 ) -> ApplyResult:
-    """UI の変更(ASIN → ISBN、None は訂正を取り消す)を CSV に書き、訂正が変わった本を引き直す。"""
+    """UI の変更(ASIN → ISBN、"" は紙版なしとして除外、None は訂正を取り消す)を CSV に書き、訂正が変わった本を
+    引き直す。"""
     if not isinstance(changes, dict):
         raise ValueError("changes must be an object of ASIN to ISBN")
     normalized: dict[str, str | None] = {}
     for asin, isbn in changes.items():
         if not isinstance(asin, str) or not _ASIN.fullmatch(asin):
             raise ValueError(f"Invalid ASIN: {asin!r}")
-        if isbn is None:
-            normalized[asin] = None
+        if isbn is None or isbn == "":
+            normalized[asin] = isbn
             continue
         if not isinstance(isbn, str) or not isbn_checksum_ok(isbn):
             raise ValueError(f"Invalid ISBN for {asin}: {isbn!r}")
@@ -310,6 +314,9 @@ def apply_changes(
     for asin, isbn in normalized.items():
         if isbn is None:
             overrides.pop(asin, None)
+        elif isbn == "":
+            # CSV の ISBN を空にした行と同じ除外。紙版のない本を要確認から外し、以後の取得で問い合わせない
+            overrides[asin] = None
         else:
             overrides[asin] = isbn
     original = csv_path.read_bytes() if csv_path.exists() else None
@@ -331,6 +338,16 @@ def apply_changes(
         _restore(csv_path, original)
         raise
     result.results = reporter.results
+    excluded = [a for a in in_scope if a in overrides and overrides[a] is None]
+    if excluded:
+        with closing(connect(db_path, read_only=True)) as con:
+            rows = con.execute(
+                "SELECT asin, title, bib_status FROM v_books WHERE list_contains(?, asin) ORDER BY title, asin",
+                [excluded],
+            ).fetchall()
+        result.excluded = [
+            {"asin": a, "title": t, "label": label_of(s, None, None)} for a, t, s in rows
+        ]
     result.fetched = summary.fetched
     result.failed = summary.counts.get("error", 0)
     result.aborted = summary.aborted

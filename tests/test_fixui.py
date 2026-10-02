@@ -197,6 +197,22 @@ def test_removing_an_override_refetches_the_book_by_title(library: Path, tmp_pat
     assert _rows(library, "SELECT count(*) FROM bib_overrides")[0][0] == 0
 
 
+def test_excluding_a_book_writes_an_empty_isbn_and_does_not_query_ndl(library: Path, tmp_path: Path) -> None:
+    # 「紙版なし」は CSV の ISBN を空にした行と同じ除外。問い合わせないので、結果は excluded で返す
+    _fetched(library)
+    ndl = FakeOpenSearch()
+    csv_path = _csv(tmp_path)
+
+    result = apply_changes(library, csv_path, {TOYOTA: ""}, _factory(ndl))
+
+    assert csv_path.read_text(encoding="utf-8") == f"asin,isbn\n{TOYOTA},\n"
+    assert ndl.calls == []
+    assert result.changed == [TOYOTA] and result.results == []
+    assert [(r["asin"], r["label"]) for r in result.excluded] == [(TOYOTA, "excluded")]
+    assert _rows(library, "SELECT status FROM bib_fetches WHERE asin = ?", [TOYOTA]) == [("excluded",)]
+    assert TOYOTA not in {b["asin"] for b in list_books(library, load_current_overrides(csv_path, library))["books"]}
+
+
 def test_apply_keeps_other_rows_and_also_applies_rows_edited_by_hand(library: Path, tmp_path: Path) -> None:
     # 蔵書にない ASIN の行と除外の行は残す。手で書き足した行(TSUGE の除外)は、DB に未反映なので一緒に反映する
     csv_path = _csv(tmp_path, f"B0NOTOWNED,{TOYOTA_ISBN}\n{TSUGE},\n")
