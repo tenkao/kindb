@@ -10,6 +10,7 @@ kindb は、Chrome 拡張で取得した `kindle.json`(主データ)と、任意
 - `docs/manual-test-scenarios.md`: 実機での確認手順。CLI の出力や import の挙動を変えたら通す。
 - `docs/glossary.md`: 用語集。仕様や会話で語の意味が揺れたら、ここに合わせるか、ここを直す。
 - `docs/tasks.md`: 残りのタスクと保留事項。手元の作業用で、gitignore の対象。タスクに着手したら、終えたら、やめると決めたら、新しいタスクが出たら更新する。次にやることや改修の候補を聞かれたら、ここを読んで答える。
+- `docs/ai-annotation-plan.md`: モデルの知識と Web 検索で、本ごとの分類と短い概要を生成する案。標本検証の段階で、kindb 本体は変えていない。補助は `scripts/annotation_trial.py`。
 - `docs/bibinfo-requirements.md` / `docs/bibinfo-plan.md`: NDL の書誌情報を追加する機能の要件と実装計画。現行仕様は `docs/spec.md` の「書誌情報」に移したので、この 2 つは理由と経緯の記録として読む。
 
 ## コード構成
