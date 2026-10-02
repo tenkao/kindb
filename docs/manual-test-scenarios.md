@@ -576,7 +576,7 @@ kindb fix -v --db "$BIB_DB" --overrides /tmp/kindb_manual/overrides.csv --log-fi
 
 期待(起動):
 - `Serving the fix page at http://127.0.0.1:<port>/` と `Overrides CSV: /tmp/kindb_manual/overrides.csv` が出て、ブラウザが開く。
-- 画面が開くと、端末に `  GET / HTTP/1.1 200`、`  GET /api/state HTTP/1.1 200`、`  GET /api/books?view=review&q=&staged= HTTP/1.1 200` の 3 行が灰色で出る(`-v` の効果)。`/favicon.ico` の 404 の行は出ない。
+- 画面を開いても、端末に要求の行は出ない(成功した要求の行はログファイルにだけ書く)。`/favicon.ico` の 404 の行も出ない。
 - 画面の上に DB と CSV のパスが出る。「要確認」の一覧は `0 冊`(8.5 の本は、照合できたか訂正済み)。
 - 「訂正済み」を押すと、8.5 で訂正した `B000NOBOOK`(「ISBN で特定」)と `B088GZFB9Z`(「除外」)が出る。
 
@@ -585,9 +585,9 @@ kindb fix -v --db "$BIB_DB" --overrides /tmp/kindb_manual/overrides.csv --log-fi
    一覧の本にフォーカスがある状態で↓と↑を押すと、前後の本に移って詳細が変わる。先頭で↑、末尾で↓を押しても動かない。検索欄や ISBN 欄にフォーカスがあるときは、↓と↑で選んだ本は変わらない。ISBN の入力欄は、保存済みの候補の表より上に出る。
 2. ISBN 欄に `9784822250851`(検査数字の誤り)を入れると、欄が赤くなり「チェックデジットが一致しません」と出て、「この ISBN を指定」を押せない。`9784822250850` に直すと押せる。押すと、入力欄のすぐ下に「反映待ち: ISBN 9784822250850 を指定」と「キャンセル」が出て、画面の下に「反映待ち 1 冊」と「ISBN の指定: 1 冊(NDL サーチへの問い合わせ 1 回)」が出る。Enter キーで指定しても同じで、取り消されない。検索欄を空にして「要確認」を押すと、`B0GMYR661F` が「紙版を特定」「反映待ち」で出る。
 3. 「すべて」を押して `B000NOBOOK` を選び、「訂正を取り消す」を押す。上の枠が「反映待ち: 訂正の取り消し」と「キャンセル」に変わる。反映待ちが 2 冊になり、「訂正の取り消し: 1 冊(書名で再検索…)」が加わる。
-4. 「反映する」を押す。問い合わせ中の表示のあと、「反映しました(再取得 2 冊)」と 1 冊ずつの結果が出る。`B0GMYR661F` は「ISBN で特定 9784822250850」、`B000NOBOOK` は「見つからない」。端末には、`  Applying: fetching 2 books from NDL Search` のあと、本ごとに問い合わせの行とその本の結果の行(`  [1/2] B000NOBOOK not_found …`、`  [2/2] B0GMYR661F found (isbn) …`)が出て、`  Saved 2 books to the database`、`  POST /api/apply HTTP/1.1 200` と続く。
+4. 「反映する」を押す。問い合わせ中の表示のあと、「反映しました(再取得 2 冊)」と 1 冊ずつの結果が出る。`B0GMYR661F` は「ISBN で特定 9784822250850」、`B000NOBOOK` は「見つからない」。端末には、`  Applying: fetching 2 books from NDL Search` のあと、本ごとに問い合わせの行とその本の結果の行(`  [1/2] B000NOBOOK not_found …`、`  [2/2] B0GMYR661F found (isbn) …`)が出て、`  Saved 2 books to the database` で終わる(`POST /api/apply` の行は端末に出ない)。
 5. 「要確認」に `B000NOBOOK`(「見つからない」)だけが出る。選ぶと、ラベルの下に、ISBN の入力を促す案内が色付きの枠で出る。「訂正済み」には `B0GMYR661F`(「ISBN で特定」)と `B088GZFB9Z`(「除外」)が出る。
-6. `B000NOBOOK` を選び、ISBN の入力欄の上にある「紙版なし(照合しない)」を押す。ボタンが「反映待ち: 紙版なし(照合しない)」と「キャンセル」に変わり、画面の下に「紙版なし: 1 冊(問い合わせなし)」が出て、問い合わせの間隔の案内は出ない。「反映する」を押すと、「反映しました(再取得 0 冊、除外 1 冊)」と「除外」の行が出る。端末に NDL サーチへの問い合わせは出ない。`B000NOBOOK` は「要確認」から消え、「訂正済み」に「除外」で出る。CSV に `B000NOBOOK,` の行が加わる。「訂正を取り消す」を押して反映すると、「見つからない」に戻る(書名で再検索する)。
+6. `B000NOBOOK` を選び、ISBN の入力欄の上にある「紙版なし(照合しない)」を押す。ボタンが「反映待ち: 紙版なし(照合しない)」と「キャンセル」に変わり、画面の下に「紙版なし: 1 冊(問い合わせなし)」が出て、問い合わせの間隔の案内は出ない。「反映する」を押すと、「反映しました(再取得 0 冊、除外 1 冊)」と「除外」の行が出る。端末には `  Excluded 1 books (no request to NDL Search)` だけが出て、`Applying` の行と NDL サーチへの問い合わせの行は出ない。`B000NOBOOK` は「要確認」から消え、「訂正済み」に「除外」で出る。CSV に `B000NOBOOK,` の行が加わる。「訂正を取り消す」を押して反映すると、「見つからない」に戻る(書名で再検索する)。
 
 期待(反映のあと):
 
@@ -602,7 +602,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: evil.example' http://127.0.0.
 - `bib_fetches` で `B0GMYR661F` は `found` で `source = isbn`、`B000NOBOOK` は `not_found` で `source = title`、`B088GZFB9Z` は `excluded` のまま。
 - トークンのない API の要求と、`Host` の違う要求は、どちらも `403`。端末の要求の行には、`403 (Missing or wrong token. Reload the page.)` と `403 (Unexpected Host header.)` のように理由が付く。
 - 端末で Ctrl-C を押すと `Stopped.` が出て終わる。
-- `/tmp/kindb_manual/fix.log` に、起動の 3 行、要求の行、反映の行、`Stopped.` が日時付きで入っている。
+- `/tmp/kindb_manual/fix.log` に、起動の 3 行、要求の行(成功した要求も含む)、反映の行、`Stopped.` が日時付きで入っている。
 
 ## 9. v0.2 DB マイグレーション
 

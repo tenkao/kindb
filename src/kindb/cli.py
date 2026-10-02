@@ -81,6 +81,9 @@ _output_log.addHandler(logging.NullHandler())
 
 class _ConsoleLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
+        # ログファイルにだけ残す行(kindb fix の成功した要求の行)は端末に出さない
+        if getattr(record, "file_only", False):
+            return
         try:
             message = self.format(record)
             if record.levelno >= logging.ERROR:
@@ -646,7 +649,7 @@ def fix(
         False,
         "--verbose",
         "-v",
-        help="Also show each page request, each book applied, and each request to NDL Search (on stderr)",
+        help="Also show each book applied, each request to NDL Search, and refused page requests (on stderr)",
     ),
     log_file: Optional[str] = _log_file_option(),
 ) -> None:

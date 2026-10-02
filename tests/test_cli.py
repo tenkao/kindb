@@ -956,3 +956,20 @@ def test_status_shows_an_unfinished_refetch(imported_db: Path, monkeypatch: pyte
     result = runner.invoke(app, retry)
     assert "Resuming the refetch started at" in result.stdout and "skipping 1 books already refetched" in result.stdout
     assert "Bib refetch unfinished" not in runner.invoke(app, ["status", "--db", str(imported_db)]).stdout
+
+
+def test_file_only_lines_go_to_the_log_file_but_not_to_the_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # kindb fix の成功した要求の行は、-v の端末に出さずログファイルにだけ書く
+    from kindb import cli
+
+    printed: list[str] = []
+    monkeypatch.setattr(cli.err_console, "print", lambda *args, **kwargs: printed.append(str(args[0])))
+    log_file = tmp_path / "fix.log"
+    with cli._logging(True, str(log_file)):
+        logging.getLogger("kindb.fixui").info("GET / HTTP/1.1 200", extra={"file_only": True})
+        logging.getLogger("kindb.fixui").info("GET /x HTTP/1.1 404 (Not found.)", extra={"file_only": False})
+    assert printed == ["  GET /x HTTP/1.1 404 (Not found.)"]
+    text = log_file.read_text(encoding="utf-8")
+    assert "GET / HTTP/1.1 200" in text and "GET /x HTTP/1.1 404" in text

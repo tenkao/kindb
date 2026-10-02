@@ -442,6 +442,15 @@ def test_requests_and_applied_books_are_logged(server: FixServer, caplog: pytest
         "POST /api/apply HTTP/1.1 200",
         "GET /api/books/B0000000ZZ HTTP/1.1 404 (No book with ASIN B0000000ZZ)",
     ]
+    # 成功した要求はログファイルにだけ書き、断った要求は -v の端末にも出す
+    assert [getattr(r, "file_only", False) for r in caplog.records][-2:] == [True, False]
+
+
+def test_excluded_books_are_logged_in_one_line(library: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    _fetched(library)
+    with caplog.at_level(logging.INFO, logger="kindb"):
+        apply_changes(library, _csv(tmp_path), {TOYOTA: ""}, _factory(FakeOpenSearch()))
+    assert [r.getMessage() for r in caplog.records] == ["Excluded 1 books (no request to NDL Search)"]
 
 
 def test_failed_books_and_stopped_applies_are_warnings(

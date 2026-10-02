@@ -260,7 +260,9 @@ class _CollectingReporter(Reporter):
         self.results: list[dict[str, object]] = []
 
     def start(self, targets: int, interval: float) -> None:
-        logger.info("Applying: fetching %d books from NDL Search", targets)
+        # 紙版なしだけを反映した回は問い合わせる本がない。「0 books」の行は出さず、除外の行だけにする
+        if targets:
+            logger.info("Applying: fetching %d books from NDL Search", targets)
 
     def waiting_for_lock(self) -> None:
         logger.info("Database is in use by another process; waiting to write...")
@@ -348,6 +350,8 @@ def apply_changes(
         result.excluded = [
             {"asin": a, "title": t, "label": label_of(s, None, None)} for a, t, s in rows
         ]
+        # 除外は問い合わせないので、1 冊ごとの行が出ない。端末でも除外したことを確かめられるよう 1 行出す
+        logger.info("Excluded %d books (no request to NDL Search)", len(result.excluded))
     result.fetched = summary.fetched
     result.failed = summary.counts.get("error", 0)
     result.aborted = summary.aborted
@@ -418,10 +422,14 @@ class _Handler(BaseHTTPRequestHandler):
 
     def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
         # 要求ごとの 1 行は、-v とログファイルにだけ出す。反映の結果はページに出る。
-        # 応答の本文を送る前に呼ばれるので、ページが結果を受け取った時点でこの行は出ている
+        # 応答の本文を送る前に呼ばれるので、ページが結果を受け取った時点でこの行は出ている。
+        # 成功した要求はログファイルにだけ書く(file_only)。画面の操作ごとに出ると、反映待ちの ASIN を並べた長い行で
+        # -v の反映の行が流れるため。断った要求は理由が要るので、-v の端末にも出す
         code = code.value if isinstance(code, HTTPStatus) else code
         reason = f" ({self._error_message})" if self._error_message else ""
-        logger.info("%s", f"{self.requestline} {code}{reason}".translate(_CONTROL_CHARS))
+        succeeded = isinstance(code, int) and code < 400
+        line = f"{self.requestline} {code}{reason}".translate(_CONTROL_CHARS)
+        logger.info("%s", line, extra={"file_only": succeeded})
 
     def log_message(self, format: str, *args: object) -> None:
         # log_error(待ち切れた接続など)は画面の操作と対応しないので出さない。要求の行は log_request が出す
