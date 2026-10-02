@@ -565,17 +565,17 @@ footer.tray {
           el("td", {}, [pick])
         ]));
       });
+      candBlock.appendChild(el("p", { class: "hint", text: "書名を押すと NDL サーチの書誌を別のタブで開きます。" }));
       var head = el("tr", {}, ["書名", "巻", "版", "シリーズ", "出版社", "刊行年月", "ページ数", "ISBN", ""].map(function (h) {
         return el("th", { text: h });
       }));
       candBlock.appendChild(el("div", { class: "table-wrap" }, [
         el("table", {}, [el("thead", {}, [head]), tbody])
       ]));
-      candBlock.appendChild(el("p", { class: "hint", text: "書名を押すと、NDL サーチの書誌が別のタブで開きます。" }));
     }
-    pane.appendChild(candBlock);
 
-    // ISBN の直接入力
+    // ISBN の直接入力。候補の表より上に置く。候補が多いと表の下まで送るのが手間で、Amazon の商品ページで紙版の
+    // ISBN を調べて入力するのが主な使い方になるため
     var input = el("input", {
       id: "isbn-input", inputmode: "numeric", autocomplete: "off", placeholder: "978…",
       "aria-labelledby": "isbn-heading", "aria-describedby": "isbn-hint"
@@ -613,10 +613,11 @@ footer.tray {
       : null;
     pane.appendChild(el("section", { class: "block" }, [
       el("h3", { id: "isbn-heading", text: "ISBN を入力" }),
-      el("p", { class: "hint", text: "候補にない紙版は、ISBN を入力して指定します。反映時に、その ISBN で NDL サーチを 1 回検索します。" }),
+      el("p", { class: "hint", text: "ISBN を入力して指定します。反映時に入力した ISBN で NDL サーチを検索します。" }),
       el("div", { class: "isbn-form" }, [input, add, hint]),
       typed
     ]));
+    pane.appendChild(candBlock);
   }
 
   // --- 反映待ち ---
