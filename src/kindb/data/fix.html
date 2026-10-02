@@ -727,6 +727,20 @@ footer.tray {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(loadBooks, 250);
   });
+  // 一覧の本にフォーカスがあるときだけ、上下のキーで前後の本を選ぶ。詳細や検索欄では、スクロールや入力の
+  // 既定の動作を残す。続けて押したときは selectBook の detailSeq で最後の本の詳細だけを出す
+  document.getElementById("books").addEventListener("keydown", function (e) {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    var current = e.target.closest(".book-item");
+    if (!current) return;
+    e.preventDefault();
+    var items = Array.prototype.slice.call(document.querySelectorAll("#books .book-item"));
+    var next = items[items.indexOf(current) + (e.key === "ArrowDown" ? 1 : -1)];
+    if (!next) return;
+    next.focus();
+    selectBook(next.dataset.asin);
+  });
   document.getElementById("apply").addEventListener("click", apply);
   window.addEventListener("beforeunload", function (e) {
     if (Object.keys(state.staged).length) { e.preventDefault(); e.returnValue = ""; }
