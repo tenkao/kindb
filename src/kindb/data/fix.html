@@ -327,10 +327,16 @@ footer.tray {
     }
   }
 
-  function showBanner(message) {
+  // 反映の失敗は、反映のあとの一覧の読み直しで消さない。消すと一瞬しか見えず、反映できなかったことに気づけないため
+  var bannerKind = null;
+  function showBanner(message, kind) {
     var banner = document.getElementById("banner");
     banner.textContent = message || "";
     banner.hidden = !message;
+    bannerKind = message ? kind || "load" : null;
+  }
+  function clearLoadBanner() {
+    if (bannerKind === "load") showBanner(null);
   }
 
   // --- ISBN の検査数字(サーバでも同じ検査をする) ---
@@ -399,7 +405,7 @@ footer.tray {
       var shown = data.books.length;
       document.getElementById("count").textContent =
         shown < data.total ? data.total + " 冊中 " + shown + " 冊を表示しています。書名などで絞り込んでください" : data.total + " 冊";
-      showBanner(null);
+      clearLoadBanner();
     }).catch(function (e) { showBanner(e.message); });
   }
 
@@ -424,7 +430,7 @@ footer.tray {
       // 別の本に移ったら先頭から見せる。前の本の候補の表を下まで見たあとだと、書名が画面の外に隠れるため
       if (changed) document.getElementById("detail").scrollTop = 0;
       loadBooks();
-      showBanner(null);
+      clearLoadBanner();
     }).catch(function (e) { showBanner(e.message); });
   }
 
@@ -729,7 +735,7 @@ footer.tray {
           }));
         }
       })
-      .catch(function (e) { showBanner("反映できませんでした: " + e.message); })
+      .catch(function (e) { showBanner("反映できませんでした: " + e.message, "apply"); })
       .then(function () {
         state.busy = false;
         busy.hidden = true;
