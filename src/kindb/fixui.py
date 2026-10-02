@@ -43,10 +43,12 @@ _CONTROL_CHARS = {c: f"\\x{c:02x}" for c in (*range(0x20), *range(0x7F, 0xA0))} 
 _MISSING = object()
 
 # 一覧のタブごとに出す状態の区分(label_of の値)。要確認には、反映待ちの本も足す。
-# 通信の失敗(error)は次の enrich が自動で引き直すので、要確認に含めない
+# 通信の失敗(error)は次の enrich が自動で引き直すので、要確認に含めない。
+# 除外は訂正済みから分ける。紙版なしをまとめて付けたあと、除外した本だけを見直せるようにするため
 _VIEW_LABELS: dict[str, frozenset[str] | None] = {
     "review": frozenset({"not_found", "incomplete", "work", "unmatched"}),
-    "corrected": frozenset({"isbn", "not_in_ndl", "excluded"}),
+    "corrected": frozenset({"isbn", "not_in_ndl"}),
+    "excluded": frozenset({"excluded"}),
     "all": None,
 }
 

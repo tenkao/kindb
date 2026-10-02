@@ -210,6 +210,7 @@ footer.tray {
       <div class="filters" role="group" aria-label="表示する本">
         <button type="button" class="tab" id="view-review" aria-pressed="true">要確認</button>
         <button type="button" class="tab" id="view-corrected" aria-pressed="false">訂正済み</button>
+        <button type="button" class="tab" id="view-excluded" aria-pressed="false">除外</button>
         <button type="button" class="tab" id="view-all" aria-pressed="false">すべて</button>
       </div>
       <div class="search">
@@ -254,7 +255,7 @@ footer.tray {
     excluded: ["除外", ""],
     error: ["取得失敗", "bad"]
   };
-  var VIEWS = ["review", "corrected", "all"];
+  var VIEWS = ["review", "corrected", "excluded", "all"];
 
   var state = {
     view: "review",

@@ -103,16 +103,16 @@ def test_review_list_shows_books_needing_attention_and_books_waiting_to_be_appli
 
 
 def test_corrected_list_shows_books_fixed_by_applied_overrides(library: Path, tmp_path: Path) -> None:
-    # ISBN で引けた本、ISBN で引いても NDL になかった本、除外した本。どれも要確認には出さない
+    # ISBN で引けた本と ISBN で引いても NDL になかった本は訂正済み、除外した本は除外のタブ。どれも要確認には出さない
     csv_path = _csv(tmp_path, f"{TOYOTA},{TOYOTA_ISBN}\n{HIMO},9784040000008\n{TSUGE},\n")
     ndl = FakeOpenSearch([({"isbn": TOYOTA_ISBN}, rss([TOYOTA_BY_ISBN]))])
     run_enrich(library, ndl.client(), overrides_path=csv_path)
     overrides = load_current_overrides(csv_path, library)
 
     corrected = list_books(library, overrides, view="corrected")
-    assert {(b["asin"], b["label"]) for b in corrected["books"]} == {
-        (TOYOTA, "isbn"), (HIMO, "not_in_ndl"), (TSUGE, "excluded")
-    }
+    assert {(b["asin"], b["label"]) for b in corrected["books"]} == {(TOYOTA, "isbn"), (HIMO, "not_in_ndl")}
+    excluded = list_books(library, overrides, view="excluded")
+    assert [(b["asin"], b["label"]) for b in excluded["books"]] == [(TSUGE, "excluded")]
     assert list_books(library, overrides)["books"] == []
     assert book_detail(library, HIMO, overrides)["book"]["label"] == "not_in_ndl"
 
