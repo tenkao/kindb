@@ -93,10 +93,12 @@ main { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; min-heigh
 }
 .tab[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 .search { padding: 0 16px 10px; display: grid; gap: 4px; }
-.search input {
+.search input[type="search"] {
   width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface);
 }
 .search .count { font-size: 12px; color: var(--muted); }
+.search .toggle { font-size: 13px; display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.search .toggle input { accent-color: var(--accent); }
 .books { list-style: none; margin: 0; padding: 0 8px 16px; overflow-y: auto; }
 .book-item {
   display: grid; gap: 3px; width: 100%; text-align: left; padding: 8px 10px; border: 0; border-radius: 6px;
@@ -219,6 +221,7 @@ footer.tray {
       </div>
       <div class="search">
         <input type="search" id="q" placeholder="書名、著者、ASIN で絞り込み" aria-label="書名、著者、ASIN で絞り込み">
+        <label class="toggle"><input type="checkbox" id="nonmanga">マンガを除く</label>
         <span class="count" id="count"></span>
       </div>
       <ul class="books" id="books" aria-label="本の一覧"></ul>
@@ -271,7 +274,8 @@ footer.tray {
     staged: {},   // asin -> {isbn: string|null, title: string}
     busy: false,
     // 候補の表の並べ替え。null は保存した順(NDL サーチの検索順)。本を移っても保つ(巻で並べて見ることが多いため)
-    candSort: null  // {key: string, dir: 1|-1}
+    candSort: null,  // {key: string, dir: 1|-1}
+    nonManga: false
   };
 
   // --- 通信 ---
@@ -387,7 +391,9 @@ footer.tray {
   var listSeq = 0;
   function loadBooks() {
     // 画面でためた変更はサーバが知らないので、要確認に足すよう ASIN を送る
-    var params = new URLSearchParams({ view: state.view, q: state.q, staged: Object.keys(state.staged).join(",") });
+    var params = new URLSearchParams({
+      view: state.view, q: state.q, staged: Object.keys(state.staged).join(","), nonmanga: state.nonManga ? "1" : ""
+    });
     var seq = ++listSeq;
     return api("/api/books?" + params).then(function (data) {
       if (seq !== listSeq) return;  // あとから送った要求の応答を、先に送った要求の応答で上書きしない
@@ -823,6 +829,10 @@ footer.tray {
     if (!next) return;
     next.focus();
     selectBook(next.dataset.asin);
+  });
+  document.getElementById("nonmanga").addEventListener("change", function (e) {
+    state.nonManga = e.target.checked;
+    loadBooks();
   });
   document.getElementById("apply").addEventListener("click", apply);
   window.addEventListener("beforeunload", function (e) {

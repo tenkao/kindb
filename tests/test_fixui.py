@@ -147,6 +147,27 @@ def test_found_book_without_a_match_is_listed_for_review(library: Path) -> None:
     assert {b["asin"] for b in list_books(library, {})["books"]} == {HIMO, TOYOTA}
 
 
+def test_excluding_manga_hides_manga_genres_and_ndc_726(library: Path) -> None:
+    # ジャンルがマンガの本と、ジャンルが空で NDC 726 の本を外す。ジャンルも NDC もない本は、分からないので残す
+    con = connect(library)
+    try:
+        con.execute("DELETE FROM book_genres")
+        con.execute(
+            "INSERT INTO book_genres (asin, genre) VALUES (?, '青年マンガ'), (?, 'ビジネス・経済')", [HIMO, TOYOTA]
+        )
+    finally:
+        con.close()
+    _fetched(library)
+    con = connect(library)
+    try:
+        con.execute("UPDATE bib_matches SET ndc = '726.1' WHERE asin = ?", [TSUGE])
+    finally:
+        con.close()
+    everything = {b["asin"] for b in list_books(library, {}, view="all")["books"]}
+    assert everything == {HIMO, TOYOTA, TSUGE}
+    assert {b["asin"] for b in list_books(library, {}, view="all", exclude_manga=True)["books"]} == {TOYOTA}
+
+
 def test_search_treats_like_wildcards_as_plain_characters(library: Path) -> None:
     assert list_books(library, {}, view="all", query="%")["total"] == 0
     assert list_books(library, {}, view="all", query="_")["total"] == 0

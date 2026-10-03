@@ -53,6 +53,11 @@ _VIEW_LABELS: dict[str, frozenset[str] | None] = {
 }
 
 
+# マンガとみなすジャンル(公式 zip の CustomerGenres)。「コミック・ラノベ・BL」はラノベも含むので、ラノベも外れる。
+# ジャンルが空の本(実 DB で約 280 冊)は、NDC が 726(漫画)のときだけマンガとみなす。分からない本を隠さないため
+_MANGA_GENRES = ["コミック・ラノベ・BL", "少年マンガ", "青年マンガ", "女性マンガ", "少女マンガ", "インディーズマンガ"]
+
+
 def label_of(status: str | None, match: str | None, source: str | None) -> str:
     """一覧と詳細に出す状態の区分。表示名と次にすることは fix.html が持つ。
 
@@ -135,8 +140,12 @@ def list_books(
     view: str = "review",
     query: str = "",
     staged: list[str] | tuple[str, ...] = (),
+    exclude_manga: bool = False,
 ) -> dict[str, object]:
-    """一覧の本。staged は画面でためた変更の ASIN で、CSV の未反映の訂正と合わせて要確認に出す。"""
+    """一覧の本。staged は画面でためた変更の ASIN で、CSV の未反映の訂正と合わせて要確認に出す。
+
+    exclude_manga はマンガ(_MANGA_GENRES のジャンルか、NDC 726)を除く。マンガ以外の本から先に直せるようにするため。
+    """
     if view not in _VIEW_LABELS:
         raise ValueError(f"Unknown view: {view}")
     for asin in staged:
@@ -148,6 +157,9 @@ def list_books(
         like = f"%{sqlguard.escape_like(query.strip())}%"
         condition = "(b.title ILIKE ? ESCAPE '\\' OR b.authors_text ILIKE ? ESCAPE '\\' OR b.asin = ?)"
         params = [like, like, query.strip()]
+    if exclude_manga:
+        condition += " AND NOT (list_has_any(b.genres, ?) OR coalesce(b.ndc, '') LIKE '726%')"
+        params.append(_MANGA_GENRES)
     with closing(connect(db_path, read_only=True)) as con:
         pending = set(_changed_asins(overrides, _db_overrides(con)))
         # タブの絞り込みは label_of で決めるので、検索で絞った本をすべて読んでから Python で絞る(蔵書は数千冊)
@@ -523,7 +535,13 @@ class _Handler(BaseHTTPRequestHandler):
             text = query.get("q", [""])[0]
             # 画面でためた変更はサーバが知らないので、要確認に足す ASIN を画面から受け取る
             staged = [a for a in query.get("staged", [""])[0].split(",") if a]
-            self._json(HTTPStatus.OK, list_books(server.db_path, overrides, view=view, query=text, staged=staged))
+            exclude_manga = query.get("nonmanga", [""])[0] == "1"
+            self._json(
+                HTTPStatus.OK,
+                list_books(
+                    server.db_path, overrides, view=view, query=text, staged=staged, exclude_manga=exclude_manga
+                ),
+            )
         elif method == "GET" and path.startswith("/api/books/"):
             asin = unquote(path[len("/api/books/"):])
             overrides = load_current_overrides(server.csv_path, server.db_path)
