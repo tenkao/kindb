@@ -143,6 +143,10 @@ section.block p { margin: 0; max-width: 70ch; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { font-size: 12px; font-weight: 500; color: var(--muted); background: var(--surface-2); white-space: nowrap; }
+th .sort { all: unset; cursor: pointer; display: inline-flex; gap: 4px; align-items: baseline; }
+th .sort:hover { color: var(--ink); }
+th .sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+th .sort .mark { font-size: 10px; min-width: 1em; }
 tr:last-child td { border-bottom: 0; }
 tr.matched td { background: var(--accent-soft); }
 tr.pending-row td { background: var(--warn-soft); }
@@ -265,7 +269,9 @@ footer.tray {
     overrides: {},
     pending: [],
     staged: {},   // asin -> {isbn: string|null, title: string}
-    busy: false
+    busy: false,
+    // 候補の表の並べ替え。null は保存した順(NDL サーチの検索順)。本を移っても保つ(巻で並べて見ることが多いため)
+    candSort: null  // {key: string, dir: 1|-1}
   };
 
   // --- 通信 ---
@@ -539,7 +545,7 @@ footer.tray {
       }));
     } else {
       var tbody = el("tbody");
-      cands.forEach(function (c) {
+      sortedCandidates(cands).forEach(function (c) {
         var pick;
         var stagedHere = staged && staged.isbn && c.isbns.some(function (x) { return x.isbn === staged.isbn; });
         if (!c.isbns.length) {
@@ -575,9 +581,9 @@ footer.tray {
         ]));
       });
       candBlock.appendChild(el("p", { class: "hint", text: "書名を押すと NDL サーチの書誌を別のタブで開きます。" }));
-      var head = el("tr", {}, ["書名", "巻", "版", "シリーズ", "出版社", "刊行年月", "ページ数", "ISBN", ""].map(function (h) {
-        return el("th", { text: h });
-      }));
+      var head = el("tr", {}, CAND_COLUMNS.map(function (col) {
+        return candHeader(col);
+      }).concat([el("th", {})]));
       candBlock.appendChild(el("div", { class: "table-wrap" }, [
         el("table", {}, [el("thead", {}, [head]), tbody])
       ]));
@@ -630,6 +636,51 @@ footer.tray {
       typed
     ]));
     pane.appendChild(candBlock);
+  }
+
+  // --- 候補の表の並べ替え ---
+  var CAND_COLUMNS = [
+    { key: "title", label: "書名", value: function (c) { return c.title; } },
+    { key: "volume", label: "巻", value: function (c) { return c.volume; } },
+    { key: "edition", label: "版", value: function (c) { return c.edition; } },
+    { key: "series", label: "シリーズ", value: function (c) { return c.series.join(" / "); } },
+    { key: "publisher", label: "出版社", value: function (c) { return c.publishers.join(", "); } },
+    { key: "issued", label: "刊行年月", value: function (c) { return c.issued; } },
+    { key: "extent", label: "ページ数", value: function (c) { return c.extent; } },
+    { key: "isbn", label: "ISBN", value: function (c) { return c.isbns.map(function (x) { return x.isbn; }).join(" "); } }
+  ];
+  // 数字を数として比べる(巻の 2 と 10、刊行年月の 2014.8 と 2014.10、ページ数の 98p と 175p)
+  var collator = new Intl.Collator("ja", { numeric: true, sensitivity: "base" });
+
+  function sortedCandidates(cands) {
+    var sort = state.candSort;
+    if (!sort) return cands;
+    var col = CAND_COLUMNS.filter(function (c) { return c.key === sort.key; })[0];
+    return cands.map(function (c, i) { return { c: c, i: i, v: col.value(c) || "" }; })
+      .sort(function (a, b) {
+        // 空の値は並べる向きによらず下に置く。比べられない値で表の上が埋まらないように
+        if (!a.v !== !b.v) return a.v ? -1 : 1;
+        return collator.compare(a.v, b.v) * sort.dir || a.i - b.i;
+      })
+      .map(function (x) { return x.c; });
+  }
+
+  // 見出しを押すたびに、昇順、降順、保存した順に戻る
+  function candHeader(col) {
+    var sort = state.candSort;
+    var dir = sort && sort.key === col.key ? sort.dir : 0;
+    return el("th", { "aria-sort": dir === 1 ? "ascending" : dir === -1 ? "descending" : "none" }, [
+      el("button", {
+        type: "button", class: "sort", "data-sort-key": col.key,
+        title: dir === 1 ? "降順に並べ替え" : dir === -1 ? "元の順に戻す" : "昇順に並べ替え",
+        onclick: function () {
+          state.candSort = dir === 0 ? { key: col.key, dir: 1 } : dir === 1 ? { key: col.key, dir: -1 } : null;
+          renderDetail();
+          var again = document.querySelector('[data-sort-key="' + col.key + '"]');
+          if (again) again.focus();
+        }
+      }, [el("span", { text: col.label }), el("span", { class: "mark", "aria-hidden": "true", text: dir === 1 ? "▲" : dir === -1 ? "▼" : "" })])
+    ]);
   }
 
   // 紙版のない本(Kindle だけの作品など)を除外にする。除外済みの本は上の枠の「訂正を取り消す」で戻す
